@@ -9,6 +9,8 @@ export type ProjectSummary = {
   organization: { id: number; name: string } | null;
   // The model every AI task in the project uses.
   ai_model: AiModelInfo | null;
+  // The model that embeds records to find ones with similar meaning.
+  embedding_model: AiModelInfo | null;
 };
 
 export type ProjectMemberInfo = { user_id: number; name: string; email: string; role: string };

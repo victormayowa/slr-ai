@@ -5,6 +5,7 @@ Saved keys are encrypted (crypto.py) and never sent back to the browser; only th
 
 import asyncio
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
@@ -69,7 +70,11 @@ def list_providers(user: models.User = Depends(get_current_user), db: Session = 
 
 
 @router.get("/ai/models")
-def list_models(user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_models(
+    purpose: Literal["chat", "embedding"] = "chat",
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Enabled catalog models. `available` says whether the caller has a key (their own or the server's) to use it."""
     saved = _saved_keys(db, user)
     return [
@@ -77,7 +82,7 @@ def list_models(user: models.User = Depends(get_current_user), db: Session = Dep
             **ai_model_out(model),
             "available": model.provider in saved or PROVIDERS[model.provider].platform_api_key() is not None,
         }
-        for model in catalog_models(db)
+        for model in catalog_models(db, purpose)
     ]
 
 
@@ -140,7 +145,8 @@ async def test_api_key(provider: str, user: models.User = Depends(get_current_us
     row = _saved_keys(db, user).get(spec.id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"You haven't saved a {spec.label} key")
-    provider_models = [model for model in catalog_models(db) if model.provider == spec.id]
+    # Chat models sort first, so a provider's key is checked with a chat model when it offers one.
+    provider_models = [model for model in catalog_models(db, purpose=None) if model.provider == spec.id]
     if not provider_models:
         raise HTTPException(status_code=409, detail=f"No {spec.label} model is currently offered")
     model_id = provider_models[0].model_id

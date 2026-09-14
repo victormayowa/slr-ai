@@ -26,6 +26,13 @@ class ProviderReply:
     output_tokens: int | None = None
 
 
+@dataclass
+class EmbeddingReply:
+    vectors: list[list[float]]
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+
 _clients: dict[tuple[str, str], Any] = {}
 
 
@@ -37,6 +44,24 @@ def _client(spec: ProviderSpec, api_key: str, create: Callable[[], Any]) -> Any:
             _clients.clear()
         _clients[cache_key] = create()
     return _clients[cache_key]
+
+
+def _gemini_client(spec: ProviderSpec, api_key: str) -> genai.Client:
+    return _client(
+        spec,
+        api_key,
+        lambda: genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_SECONDS * 1000)),
+    )
+
+
+def _openai_client(spec: ProviderSpec, api_key: str) -> openai.AsyncOpenAI:
+    return _client(
+        spec,
+        api_key,
+        lambda: openai.AsyncOpenAI(
+            api_key=api_key, base_url=spec.resolved_base_url, timeout=REQUEST_TIMEOUT_SECONDS, max_retries=0
+        ),
+    )
 
 
 async def call_provider(
@@ -89,11 +114,7 @@ async def _call_anthropic(
 async def _call_gemini(
     spec: ProviderSpec, model: str, prompt: str, api_key: str, json_schema: dict[str, Any] | None
 ) -> ProviderReply:
-    client: genai.Client = _client(
-        spec,
-        api_key,
-        lambda: genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_SECONDS * 1000)),
-    )
+    client = _gemini_client(spec, api_key)
     config = (
         types.GenerateContentConfig(response_mime_type="application/json", response_json_schema=json_schema)
         if json_schema is not None
@@ -111,13 +132,7 @@ async def _call_gemini(
 async def _call_openai_compatible(
     spec: ProviderSpec, model: str, prompt: str, api_key: str, json_schema: dict[str, Any] | None, max_tokens: int
 ) -> ProviderReply:
-    client: openai.AsyncOpenAI = _client(
-        spec,
-        api_key,
-        lambda: openai.AsyncOpenAI(
-            api_key=api_key, base_url=spec.resolved_base_url, timeout=REQUEST_TIMEOUT_SECONDS, max_retries=0
-        ),
-    )
+    client = _openai_client(spec, api_key)
     # JSON mode is the structured-output feature all OpenAI-compatible providers share; the runner validates the reply.
     response_format: Any = {"type": "json_object"} if json_schema is not None else openai.omit
     if spec.max_tokens_param == "max_completion_tokens":
@@ -140,6 +155,25 @@ async def _call_openai_compatible(
         usage.prompt_tokens if usage else None,
         usage.completion_tokens if usage else None,
     )
+
+
+async def embed_texts(
+    spec: ProviderSpec, model: str, texts: list[str], api_key: str, *, dimensions: int
+) -> EmbeddingReply:
+    if spec.adapter == "gemini":
+        response = await _gemini_client(spec, api_key).aio.models.embed_content(
+            model=model,
+            contents=texts,
+            config=types.EmbedContentConfig(output_dimensionality=dimensions, task_type="SEMANTIC_SIMILARITY"),
+        )
+        return EmbeddingReply([list(embedding.values or []) for embedding in response.embeddings or []])
+    if spec.adapter == "openai_compatible":
+        result = await _openai_client(spec, api_key).embeddings.create(
+            model=model, input=texts, dimensions=dimensions if spec.embedding_dimensions_param else openai.omit
+        )
+        vectors = [item.embedding for item in sorted(result.data, key=lambda item: item.index)]
+        return EmbeddingReply(vectors, result.usage.prompt_tokens if result.usage else None)
+    raise ValueError(f"{spec.label} does not offer embeddings")
 
 
 def status_code(exc: BaseException) -> int | None:

@@ -108,3 +108,13 @@ export const toPaper = (record: ApiRecord): Paper => ({
   rob_data: record.appraisal?.judgments ?? undefined,
   rob_error: record.appraisal?.error ?? undefined,
 });
+
+export type RecordBrief = { id: number; title: string; authors: string; year: string; doi: string; source: string };
+
+// Mirrors GET /api/projects/{id}/similar-pairs.
+export type SimilarPairs = {
+  model: string;
+  embedded_records: number;
+  unique_records: number;
+  pairs: { record: RecordBrief; other: RecordBrief; similarity: number }[];
+};

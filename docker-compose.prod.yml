@@ -43,6 +43,23 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Runs background AI jobs. Scale with: docker compose -f docker-compose.prod.yml up -d --scale worker=2
+  worker:
+    build: ./backend
+    command: ["arq", "workers.ai_worker.WorkerSettings"]
+    env_file:
+      - ./backend/.env
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://omnireview:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/omnireview
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:

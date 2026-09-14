@@ -96,6 +96,7 @@ def _project_out(project: models.Project, role: str) -> dict:
         ),
         "role": role,
         "ai_model": ai_model_out(project.ai_model) if project.ai_model else None,
+        "embedding_model": ai_model_out(project.embedding_model) if project.embedding_model else None,
         "member_count": len(project.members),
         "created_at": project.created_at,
     }
@@ -205,7 +206,7 @@ def set_project_ai_model(
 ):
     """Pin the model used for every AI task in the project. Earlier runs keep a record of the model they used."""
     model = db.get(models.AIModel, body.ai_model_id)
-    if model is None or not model.enabled:
+    if model is None or not model.enabled or model.purpose != "chat":
         raise HTTPException(status_code=404, detail="That AI model isn't available")
     previous = access.project.ai_model
     if previous is None or previous.id != model.id:
@@ -215,6 +216,32 @@ def set_project_ai_model(
             project_id=access.project.id,
             actor_id=access.user.id,
             action="project.ai_model_changed",
+            entity_type="project",
+            entity_id=access.project.id,
+            details={"from": model_ref(previous), "to": model_ref(model)},
+        )
+    db.commit()
+    return _project_out(access.project, access.membership.role)
+
+
+@router.put("/{project_id}/embedding-model")
+def set_project_embedding_model(
+    body: AIModelSelection,
+    access: ProjectAccess = Depends(project_access(Permission.EDIT_PROJECT)),
+    db: Session = Depends(get_db),
+):
+    """Pin the model that embeds records. Embeddings made by other models are kept but not compared with new ones."""
+    model = db.get(models.AIModel, body.ai_model_id)
+    if model is None or not model.enabled or model.purpose != "embedding":
+        raise HTTPException(status_code=404, detail="That embedding model isn't available")
+    previous = access.project.embedding_model
+    if previous is None or previous.id != model.id:
+        access.project.embedding_model = model
+        record_event(
+            db,
+            project_id=access.project.id,
+            actor_id=access.user.id,
+            action="project.embedding_model_changed",
             entity_type="project",
             entity_id=access.project.id,
             details={"from": model_ref(previous), "to": model_ref(model)},

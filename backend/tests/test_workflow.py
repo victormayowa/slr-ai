@@ -17,6 +17,7 @@ from workflow_helpers import (
     open_extraction,
     open_screening,
     open_synthesis,
+    run_ai,
     url,
 )
 
@@ -260,7 +261,7 @@ def test_ai_screening_suggests_but_never_decides(client, project, fake_provider)
     fake_provider('{"decision": "Include", "reasoning": "Adults in a trial", "supporting_quote": "Adults  RANDOMIZED"}')
 
     body = {"record_ids": [r["id"] for r in records]}
-    screened = client.post(url(project_id, "screening/ai"), json=body, headers=headers).json()
+    screened = run_ai(client, project_id, headers, "screening/ai", body)
 
     assert [(r["ai_screening"]["decision"], r["final_decision"]) for r in screened] == [("Include", None)] * 2
     assert [r["ai_screening"]["quote_verified"] for r in screened] == [True, True]
@@ -275,7 +276,7 @@ def test_quotes_missing_from_the_record_are_flagged_as_unverified(client, projec
     )
 
     body = {"record_ids": [record_id]}
-    screened = client.post(url(project_id, "screening/ai"), json=body, headers=headers).json()[0]
+    screened = run_ai(client, project_id, headers, "screening/ai", body)[0]
 
     assert screened["ai_screening"]["quote_verified"] is False
 
@@ -287,7 +288,7 @@ def test_unusable_ai_screening_output_is_stored_as_an_error(client, project, fak
     calls.clear()
 
     body = {"record_ids": [record_id]}
-    screened = client.post(url(project_id, "screening/ai"), json=body, headers=headers).json()[0]
+    screened = run_ai(client, project_id, headers, "screening/ai", body)[0]
 
     assert screened["ai_screening"]["decision"] is None
     assert "required structure" in screened["ai_screening"]["error"]
@@ -354,7 +355,7 @@ def test_extraction_and_appraisal_run_only_on_included_records(client, project, 
     assert client.post(url(project_id, "extraction/ai"), json=excluded_body, headers=headers).status_code == 400
 
     body = {"record_ids": [included["id"]]}
-    extracted = client.post(url(project_id, "extraction/ai"), json=body, headers=headers).json()[0]
+    extracted = run_ai(client, project_id, headers, "extraction/ai", body)[0]
     assert extracted["extraction"]["values"] == {
         "Sample Size": "120",
         "Mean Age": "Missing from AI response",
@@ -371,7 +372,7 @@ def test_extraction_and_appraisal_run_only_on_included_records(client, project, 
     complete_stage(client, project_id, headers, "extraction")
 
     fake_provider(APPRAISAL_REPLY)
-    appraised = client.post(url(project_id, "appraisal/ai"), json=body, headers=headers).json()[0]
+    appraised = run_ai(client, project_id, headers, "appraisal/ai", body)[0]
     assert appraised["appraisal"]["tool"] == "ROB-2"
     assert appraised["appraisal"]["judgments"]["D1: Randomization"] == "Low"
     assert appraised["appraisal"]["judgments"]["D2: Deviations"] == "Missing from AI response"

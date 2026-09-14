@@ -77,6 +77,12 @@ def project_ai(db: Session, access: ProjectAccess) -> AIContext:
     return resolve_ai(db, access.project.ai_model, access.user)
 
 
+def project_embedding_ai(db: Session, access: ProjectAccess) -> AIContext:
+    if access.project.embedding_model is None:
+        raise HTTPException(status_code=409, detail="Choose an embedding model for this project first")
+    return resolve_ai(db, access.project.embedding_model, access.user)
+
+
 def new_ai_run(access: ProjectAccess, task: str, prompt: PromptTemplate, ai: AIContext) -> models.AIRun:
     return models.AIRun(
         project_id=access.project.id,

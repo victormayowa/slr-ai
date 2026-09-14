@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -22,6 +23,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
+from llm.providers import EMBEDDING_DIMENSIONS
 
 
 def utcnow() -> datetime:
@@ -76,7 +78,7 @@ class AIModel(Base):
     __tablename__ = "ai_models"
     __table_args__ = (
         UniqueConstraint("provider", "model_id", name="uq_ai_model"),
-        Index("uq_ai_models_single_default", "is_default", unique=True, postgresql_where=text("is_default")),
+        Index("uq_ai_models_default_per_purpose", "purpose", unique=True, postgresql_where=text("is_default")),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -85,8 +87,10 @@ class AIModel(Base):
     # The provider's model ID, sent with each request.
     model_id: Mapped[str] = mapped_column(String(100))
     label: Mapped[str] = mapped_column(String(200))
+    # "chat" for text generation, or "embedding".
+    purpose: Mapped[str] = mapped_column(String(10), default="chat", server_default="chat")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
-    # The model new projects start with; at most one.
+    # The model new projects start with for its purpose; at most one per purpose.
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # US dollars per million tokens. When unknown, run costs are left blank rather than estimated.
     input_price_per_mtok: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
@@ -136,10 +140,15 @@ class Project(Base):
     ai_model_id: Mapped[int | None] = mapped_column(
         ForeignKey("ai_models.id", ondelete="SET NULL", name="fk_projects_ai_model_id")
     )
+    # The model that embeds the project's records for similarity search.
+    embedding_model_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ai_models.id", ondelete="SET NULL", name="fk_projects_embedding_model_id")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     organization: Mapped[Organization | None] = relationship()
-    ai_model: Mapped[AIModel | None] = relationship()
+    ai_model: Mapped[AIModel | None] = relationship(foreign_keys=[ai_model_id])
+    embedding_model: Mapped[AIModel | None] = relationship(foreign_keys=[embedding_model_id])
     members: Mapped[list["ProjectMember"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     protocol: Mapped["Protocol | None"] = relationship(back_populates="project", cascade="all, delete-orphan")
     extraction_fields: Mapped[list["ExtractionField"]] = relationship(
@@ -423,5 +432,54 @@ class StageSnapshot(Base):
     note: Mapped[str] = mapped_column(Text)
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    created_by: Mapped[User | None] = relationship()
+
+
+class RecordEmbedding(Base):
+    """A record's title and abstract embedded by one model. Vectors from different models are never compared."""
+
+    __tablename__ = "record_embeddings"
+    __table_args__ = (
+        UniqueConstraint("record_id", "model", name="uq_record_embedding_model"),
+        Index(
+            "ix_record_embeddings_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"))
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    # "provider/model_id" of the embedding model.
+    model: Mapped[str] = mapped_column(String(130))
+    # SHA-256 of the embedded text, so unchanged records aren't embedded again.
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    embedding: Mapped[Any] = mapped_column(Vector(EMBEDDING_DIMENSIONS))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AIJob(Base):
+    """A batch of AI work run by a background worker (ai_tasks.run_job). Progress is saved as records finish."""
+
+    __tablename__ = "ai_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    # "screening", "extraction", "appraisal", or "embedding"
+    task: Mapped[str] = mapped_column(String(20))
+    # "queued", "running", "completed", or "failed". A completed job can include records that failed.
+    status: Mapped[str] = mapped_column(String(10))
+    record_ids: Mapped[list[int]] = mapped_column(JSONB)
+    total: Mapped[int] = mapped_column(Integer)
+    processed: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_by: Mapped[User | None] = relationship()

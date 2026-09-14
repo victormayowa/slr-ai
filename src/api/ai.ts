@@ -6,6 +6,7 @@ export type AiModelInfo = {
   provider_label: string;
   model_id: string;
   label: string;
+  purpose: 'chat' | 'embedding';
   is_default: boolean;
   enabled: boolean;
   data_location: string | null;

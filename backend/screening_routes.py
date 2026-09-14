@@ -1,17 +1,14 @@
-"""AI suggestions (screening, extraction, appraisal, synthesis) and reviewers' screening decisions.
+"""Reviewers' screening decisions and the AI narrative synthesis.
 
-AI output is stored as suggestions with provenance; only a reviewer's decision includes or excludes a record,
-and extraction, appraisal, and synthesis run only on records a reviewer included. Every AI task uses the project's
-pinned model.
+Batch AI suggestions (screening, extraction, appraisal) run as background jobs; see jobs_routes.py. AI output is stored
+as suggestions with provenance; only a reviewer's decision includes or excludes a record.
 """
 
-import asyncio
 import logging
-from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -19,19 +16,13 @@ import models
 from ai_access import new_ai_run, project_ai, record_usage
 from audit import record_event
 from database import get_db
-from llm.prompts import APPRAISAL_PROMPT, EXTRACTION_PROMPT, SCREENING_PROMPT, SYNTHESIS_PROMPT, PromptTemplate
-from llm.runner import AIContext, AIResult
+from llm.prompts import SYNTHESIS_PROMPT
 from permissions import Permission
 from projects_routes import ProjectAccess, get_in_project, project_access
 from rate_limiting import ai_rate_limit
 from records_routes import record_out, with_record_details
 from review_data import TITLE_ABSTRACT, final_decision
 from services.ai_screening import (
-    Eligibility,
-    ExtractedField,
-    assess_risk_of_bias,
-    evaluate_eligibility,
-    extract_data_from_paper,
     generate_narrative_synthesis,
 )
 from services.errors import LLMError
@@ -41,130 +32,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["screening"])
 
-MAX_RECORDS_PER_AI_BATCH = 50
-
-
-class AIBatchRequest(BaseModel):
-    record_ids: list[int] = Field(min_length=1, max_length=MAX_RECORDS_PER_AI_BATCH)
-
 
 class DecisionRequest(BaseModel):
     decision: Literal["include", "exclude", "undecided"]
-
-
-def _paper_text(record: models.Record) -> str:
-    return f"Title: {record.title}\nAbstract: {record.abstract}"
-
-
-def _load_records(db: Session, project_id: int, record_ids: list[int]) -> list[models.Record]:
-    records = db.scalars(
-        with_record_details(
-            select(models.Record)
-            .where(models.Record.project_id == project_id, models.Record.id.in_(record_ids))
-            .order_by(models.Record.id)
-        )
-    ).all()
-    if len(records) != len(set(record_ids)):
-        raise HTTPException(status_code=404, detail="One or more records were not found in this project")
-    return list(records)
-
-
-def _require_included(records: list[models.Record]) -> None:
-    not_included = [record.id for record in records if final_decision(record) != "include"]
-    if not_included:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Only records a reviewer has included can be processed. Not included: {not_included[:20]}",
-        )
-
-
-async def _run_per_record[T](
-    db: Session,
-    access: ProjectAccess,
-    ai: AIContext,
-    records: list[models.Record],
-    task: str,
-    prompt: PromptTemplate,
-    call: Callable[[models.Record], Awaitable[AIResult[T]]],
-    store: Callable[[models.AIRun, T], None],
-) -> list[dict]:
-    """Run an AI task per record, storing each outcome, including failures, as an AIRun."""
-    outcomes = await asyncio.gather(*(call(record) for record in records), return_exceptions=True)
-    failed = 0
-    for record, outcome in zip(records, outcomes, strict=True):
-        run = new_ai_run(access, task, prompt, ai)
-        record.ai_runs.append(run)
-        if isinstance(outcome, LLMError):
-            run.status, run.error = "failed", str(outcome)
-            record_usage(run, ai, outcome.usage)
-            failed += 1
-        elif isinstance(outcome, Exception):
-            logger.error("Unexpected error during AI %s", task, exc_info=outcome)
-            run.status, run.error = "failed", "Unexpected server error while processing this record"
-            failed += 1
-        elif isinstance(outcome, BaseException):
-            raise outcome
-        else:
-            run.status = "succeeded"
-            record_usage(run, ai, outcome.usage)
-            store(run, outcome.value)
-    db.flush()
-
-    record_event(
-        db,
-        project_id=access.project.id,
-        actor_id=access.user.id,
-        action=f"ai.{task}",
-        entity_type="record",
-        details={
-            "provider": ai.provider.id,
-            "model": ai.model,
-            "prompt_version": prompt.id,
-            "key_source": ai.key_source,
-            "record_ids": [record.id for record in records],
-            "failed": failed,
-        },
-    )
-    db.commit()
-    return [record_out(record, access.user.id) for record in records]
-
-
-@router.post("/screening/ai", dependencies=[Depends(ai_rate_limit)])
-async def suggest_screening_decisions(
-    body: AIBatchRequest,
-    access: ProjectAccess = Depends(project_access(Permission.SCREEN)),
-    db: Session = Depends(get_db),
-):
-    require_stage_open(db, access.project.id, "screening")
-    accepted = db.scalars(
-        select(models.Criterion)
-        .where(models.Criterion.project_id == access.project.id, models.Criterion.status == "accepted")
-        .order_by(models.Criterion.id)
-    ).all()
-    inclusion = [c.text for c in accepted if c.kind == "inclusion"]
-    exclusion = [c.text for c in accepted if c.kind == "exclusion"]
-    if not inclusion:
-        raise HTTPException(status_code=400, detail="Accept at least one inclusion criterion before screening")
-    criteria_text = "Include only if all of these apply:\n- " + "\n- ".join(inclusion)
-    criteria_text += "\n\nExclude if any of these apply:\n- " + ("\n- ".join(exclusion) or "(none specified)")
-
-    records = _load_records(db, access.project.id, body.record_ids)
-    if any(record.duplicate_of_id is not None for record in records):
-        raise HTTPException(status_code=400, detail="Duplicate records are not screened")
-    ai = project_ai(db, access)
-
-    async def call(record: models.Record) -> AIResult[Eligibility]:
-        return await evaluate_eligibility(ai, _paper_text(record), criteria_text)
-
-    def store(run: models.AIRun, result: Eligibility) -> None:
-        run.screening = models.ScreeningSuggestion(
-            decision=result.decision,
-            reasoning=result.reasoning,
-            supporting_quote=result.supporting_quote,
-            quote_verified=result.quote_verified,
-        )
-
-    return await _run_per_record(db, access, ai, records, "screening", SCREENING_PROMPT, call, store)
 
 
 @router.put("/records/{record_id}/decision")
@@ -202,62 +72,6 @@ def set_screening_decision(
     )
     db.commit()
     return record_out(record, access.user.id)
-
-
-@router.post("/extraction/ai", dependencies=[Depends(ai_rate_limit)])
-async def suggest_extraction(
-    body: AIBatchRequest,
-    access: ProjectAccess = Depends(project_access(Permission.EXTRACT)),
-    db: Session = Depends(get_db),
-):
-    require_stage_open(db, access.project.id, "extraction")
-    fields = list(access.project.extraction_fields)
-    if not fields:
-        raise HTTPException(status_code=400, detail="Add at least one extraction field first")
-    records = _load_records(db, access.project.id, body.record_ids)
-    _require_included(records)
-    field_names = [field.name for field in fields]
-    fields_by_name = {field.name: field for field in fields}
-    ai = project_ai(db, access)
-
-    async def call(record: models.Record) -> AIResult[list[ExtractedField]]:
-        return await extract_data_from_paper(ai, _paper_text(record), field_names)
-
-    def store(run: models.AIRun, extracted: list[ExtractedField]) -> None:
-        run.extraction_values = [
-            models.ExtractionSuggestion(
-                field=fields_by_name[item.field],
-                value=item.value,
-                evidence_quote=item.quote,
-                quote_verified=item.quote_verified,
-            )
-            for item in extracted
-        ]
-
-    return await _run_per_record(db, access, ai, records, "extraction", EXTRACTION_PROMPT, call, store)
-
-
-@router.post("/appraisal/ai", dependencies=[Depends(ai_rate_limit)])
-async def suggest_appraisal(
-    body: AIBatchRequest,
-    access: ProjectAccess = Depends(project_access(Permission.APPRAISE)),
-    db: Session = Depends(get_db),
-):
-    require_stage_open(db, access.project.id, "appraisal")
-    if access.project.protocol is None:
-        raise HTTPException(status_code=404, detail="This project has no protocol")
-    tool = access.project.protocol.rob_tool
-    records = _load_records(db, access.project.id, body.record_ids)
-    _require_included(records)
-    ai = project_ai(db, access)
-
-    async def call(record: models.Record) -> AIResult[dict[str, str]]:
-        return await assess_risk_of_bias(ai, _paper_text(record), tool)
-
-    def store(run: models.AIRun, judgments: dict[str, str]) -> None:
-        run.appraisal = models.AppraisalSuggestion(tool=tool, judgments=judgments)
-
-    return await _run_per_record(db, access, ai, records, "appraisal", APPRAISAL_PROMPT, call, store)
 
 
 def synthesis_out(report: models.SynthesisReport) -> dict:

@@ -23,6 +23,7 @@ from services.errors import LLMError
 
 # Captured at import, before the autouse fixture that blocks real provider calls replaces it.
 REAL_CALL_PROVIDER = adapters.call_provider
+REAL_EMBED_TEXTS = adapters.embed_texts
 OPENAI_COMPATIBLE = [spec.id for spec in PROVIDERS.values() if spec.adapter == "openai_compatible"]
 
 
@@ -316,3 +317,82 @@ def test_encryption_needs_a_32_byte_key(monkeypatch):
 
     with pytest.raises(crypto.EncryptionNotConfigured):
         crypto.encrypt("sk-secret", "context")
+
+
+# Embeddings
+
+
+def test_embeddings_must_match_the_stored_vector_size(monkeypatch):
+    async def short_vectors(spec, model, texts, api_key, *, dimensions):
+        return adapters.EmbeddingReply([[0.0] * 3 for _ in texts], input_tokens=4)
+
+    monkeypatch.setattr(adapters, "embed_texts", short_vectors)
+
+    with pytest.raises(LLMError) as error:
+        asyncio.run(runner.embed(context("openai"), ["a", "b"]))
+
+    assert "expected size 1024" in str(error.value)
+    assert error.value.usage.input_tokens == 4
+
+
+def test_embedding_rate_limits_are_retried(monkeypatch):
+    replies = [ProviderHTTPError(429), adapters.EmbeddingReply([[0.5] * 1024], input_tokens=2)]
+
+    async def call(spec, model, texts, api_key, *, dimensions):
+        reply = replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    monkeypatch.setattr(adapters, "embed_texts", call)
+
+    result = asyncio.run(runner.embed(context("mistral"), ["a"]))
+
+    assert (len(result.value[0]), result.usage.attempts) == (1024, 2)
+
+
+@pytest.mark.parametrize("provider", ["openai", "qwen", "glm", "mistral"])
+def test_openai_compatible_embedding_contract(monkeypatch, provider):
+    spec = PROVIDERS[provider]
+    seen: dict = {}
+    response = {
+        "object": "list",
+        "model": "e",
+        "data": [
+            {"object": "embedding", "index": 1, "embedding": [0.5, 0.5]},
+            {"object": "embedding", "index": 0, "embedding": [1.0, 0.0]},
+        ],
+        "usage": {"prompt_tokens": 7, "total_tokens": 7},
+    }
+    client = openai.AsyncOpenAI(
+        api_key="k", base_url=spec.resolved_base_url, max_retries=0, http_client=recording_transport(response, seen)
+    )
+    monkeypatch.setattr(adapters, "_client", lambda spec, api_key, create: client)
+
+    reply = asyncio.run(REAL_EMBED_TEXTS(spec, "e", ["first", "second"], "k", dimensions=1024))
+
+    assert seen["url"] == f"{(spec.base_url or 'https://api.openai.com/v1').rstrip('/')}/embeddings"
+    assert seen["body"]["input"] == ["first", "second"]
+    assert seen["body"].get("dimensions") == (1024 if spec.embedding_dimensions_param else None)
+    assert (reply.vectors, reply.input_tokens) == ([[1.0, 0.0], [0.5, 0.5]], 7)
+
+
+def test_gemini_embedding_contract(monkeypatch):
+    spec = PROVIDERS["gemini"]
+    seen: dict = {}
+    response = {"embeddings": [{"values": [1.0, 0.0]}, {"values": [0.5, 0.5]}]}
+    client = genai.Client(
+        api_key="k", http_options=types.HttpOptions(httpx_async_client=recording_transport(response, seen))
+    )
+    monkeypatch.setattr(adapters, "_client", lambda spec, api_key, create: client)
+
+    reply = asyncio.run(REAL_EMBED_TEXTS(spec, "gemini-embedding-001", ["first", "second"], "k", dimensions=1024))
+
+    assert "gemini-embedding-001:batchEmbedContents" in seen["url"]
+    assert [request["outputDimensionality"] for request in seen["body"]["requests"]] == [1024, 1024]
+    assert reply.vectors == [[1.0, 0.0], [0.5, 0.5]]
+
+
+def test_providers_without_an_embeddings_api_are_refused():
+    with pytest.raises(ValueError):
+        asyncio.run(REAL_EMBED_TEXTS(PROVIDERS["anthropic"], "m", ["text"], "k", dimensions=1024))

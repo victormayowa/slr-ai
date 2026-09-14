@@ -11,6 +11,10 @@ from typing import Literal
 
 AdapterKind = Literal["anthropic", "gemini", "openai_compatible"]
 
+# Every stored embedding has this many dimensions, so one pgvector column and index serve every embedding model.
+# Only models that can produce vectors of this size belong in the catalog.
+EMBEDDING_DIMENSIONS = 1024
+
 
 @dataclass(frozen=True)
 class ProviderSpec:
@@ -23,6 +27,9 @@ class ProviderSpec:
     base_url: str | None = None
     # OpenAI's current models require max_completion_tokens; most OpenAI-compatible APIs accept only max_tokens.
     max_tokens_param: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+    # Texts per embeddings request, and whether the embeddings API accepts a requested vector size.
+    embedding_batch_size: int = 64
+    embedding_dimensions_param: bool = True
 
     @property
     def resolved_base_url(self) -> str | None:
@@ -52,6 +59,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
             adapter="gemini",
             api_key_env="GEMINI_API_KEY",
             headquarters="Google, United States",
+            embedding_batch_size=100,
         ),
         ProviderSpec(
             id="openai",
@@ -68,6 +76,7 @@ PROVIDERS: dict[str, ProviderSpec] = {
             api_key_env="DASHSCOPE_API_KEY",
             headquarters="Alibaba Cloud, China (international endpoint in Singapore)",
             base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            embedding_batch_size=10,
         ),
         ProviderSpec(
             id="kimi",
@@ -100,6 +109,8 @@ PROVIDERS: dict[str, ProviderSpec] = {
             api_key_env="MISTRAL_API_KEY",
             headquarters="Mistral AI, France (European Union)",
             base_url="https://api.mistral.ai/v1",
+            # mistral-embed always returns 1,024 dimensions and rejects the dimensions parameter.
+            embedding_dimensions_param=False,
         ),
     ]
 }

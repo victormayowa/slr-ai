@@ -7,7 +7,7 @@ DEFAULT_EXTRACTION_FIELDS = ["Sample Size", "Mean Age", "Primary Outcome Result"
 
 
 def apply_project_defaults(db: Session, project: models.Project) -> None:
-    """Give a new project its protocol record, starting extraction fields, and the catalog's default AI model."""
+    """Give a new project its protocol record, starting extraction fields, and the catalog's default models."""
     if project.protocol is None:
         project.protocol = models.Protocol()
     if not project.extraction_fields:
@@ -17,3 +17,5 @@ def apply_project_defaults(db: Session, project: models.Project) -> None:
         ]
     if project.ai_model is None:
         project.ai_model = default_model(db)
+    if project.embedding_model is None:
+        project.embedding_model = default_model(db, "embedding")

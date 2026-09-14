@@ -54,6 +54,7 @@ uv sync
 uv run alembic upgrade head        # create or update the database schema
 uv run python -m scripts.seed_dev  # optional: demo accounts and projects
 uv run uvicorn main:app --reload
+uv run arq workers.ai_worker.WorkerSettings  # in a second terminal: runs AI screening, extraction, appraisal, and embedding jobs
 ```
 
 OmniReview requires PostgreSQL 16 with the pgvector extension in every environment; there is no SQLite fallback. The setup script expects PostgreSQL 16 to be installed already (`sudo apt install postgresql`) and asks for your sudo password.
@@ -86,7 +87,7 @@ CI runs all of these on every push and pull request, tests the backend against P
 
 ## Production
 
-`docker-compose.prod.yml` runs Caddy (static frontend, automatic HTTPS, `/api` proxy), the API, PostgreSQL, and Redis on a single server:
+`docker-compose.prod.yml` runs Caddy (static frontend, automatic HTTPS, `/api` proxy), the API, a background AI worker, PostgreSQL, and Redis on a single server:
 
 ```bash
 SITE_ADDRESS=app.example.com POSTGRES_PASSWORD=change-me \

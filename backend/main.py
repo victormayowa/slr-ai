@@ -13,10 +13,12 @@ import models
 from ai_access import resolve_ai
 from ai_catalog import default_model
 from ai_routes import router as ai_router
+from ai_tasks import TaskNotReady
 from audit_routes import router as audit_router
 from auth_routes import get_current_user
 from auth_routes import router as auth_router
 from database import engine, get_db
+from jobs_routes import router as jobs_router
 from observability import RequestIdMiddleware, configure_logging, configure_sentry
 from projects_routes import router as projects_router
 from rate_limiting import ai_rate_limit
@@ -76,6 +78,12 @@ app.include_router(screening_router)
 app.include_router(audit_router)
 app.include_router(workflow_router)
 app.include_router(ai_router)
+app.include_router(jobs_router)
+
+
+@app.exception_handler(TaskNotReady)
+async def task_not_ready_handler(request: Request, exc: TaskNotReady) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
 
 
 @app.exception_handler(WorkflowError)

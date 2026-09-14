@@ -2,6 +2,7 @@
 run. The environment is set before the app is imported, so tests never touch development data or call AI providers."""
 
 import base64
+import hashlib
 import os
 from pathlib import Path
 
@@ -41,6 +42,8 @@ from alembic.config import Config  # noqa: E402
 from factories import PASSWORD, registration  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+import ai_tasks  # noqa: E402
+import jobs  # noqa: E402
 import main  # noqa: E402
 import rate_limiting  # noqa: E402
 from llm import adapters  # noqa: E402
@@ -62,6 +65,26 @@ def block_real_ai_calls(monkeypatch):
         raise AssertionError("Tests must not call real AI providers; use the fake_provider fixture")
 
     monkeypatch.setattr(adapters, "call_provider", refuse)
+    monkeypatch.setattr(adapters, "embed_texts", refuse)
+
+
+@pytest.fixture(autouse=True)
+def inline_ai_jobs(monkeypatch):
+    """Run background AI jobs as soon as they're queued, so tests need neither Redis nor a worker."""
+
+    async def run_now(job_id: int) -> None:
+        await ai_tasks.run_job(job_id)
+
+    monkeypatch.setattr(jobs, "enqueue_job", run_now)
+
+
+def trigram_vector(text: str, dimensions: int) -> list[float]:
+    """A stand-in embedding built from character trigram counts, so texts with shared wording get similar vectors."""
+    vector = [0.0] * dimensions
+    normalized = " ".join(text.lower().split())
+    for start in range(len(normalized) - 2):
+        vector[int(hashlib.sha256(normalized[start : start + 3].encode()).hexdigest(), 16) % dimensions] += 1.0
+    return vector
 
 
 @pytest.fixture
@@ -104,6 +127,8 @@ def auth_headers(make_user):
 def fake_provider(monkeypatch):
     """Give every provider a server key and answer AI calls with a canned reply, or raise it if it's an exception.
 
+    Embedding calls get trigram vectors (see trigram_vector) unless the reply is an exception.
+
     Each install returns the shared list of calls made, so tests can check the provider, model, and key used.
     """
     calls: list[dict] = []
@@ -119,7 +144,15 @@ def fake_provider(monkeypatch):
                 raise reply
             return adapters.ProviderReply(reply, input_tokens=100, output_tokens=20)
 
+        async def fake_embed(spec, model, texts, api_key, *, dimensions):
+            calls.append({"provider": spec.id, "model": model, "api_key": api_key, "texts": texts})
+            if isinstance(reply, Exception):
+                raise reply
+            vectors = [trigram_vector(text, dimensions) for text in texts]
+            return adapters.EmbeddingReply(vectors, input_tokens=10 * len(texts))
+
         monkeypatch.setattr(adapters, "call_provider", fake_call)
+        monkeypatch.setattr(adapters, "embed_texts", fake_embed)
         return calls
 
     return install

@@ -1,10 +1,11 @@
 import Papa from 'papaparse';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { modelDisplayName, type AiModelInfo } from '../../api/ai';
 import { ApiError, errorMessage } from '../../api/client';
+import { jobProblem, jobProgress, waitForJob, type AiJob } from '../../api/jobs';
 import type { ProjectSummary } from '../../api/projects';
-import { toPaper, type ApiRecord, type CriterionInfo, type Paper, type PrismaCounts, type ProtocolSettings, type StrategyInfo, type WorkflowStageInfo } from '../../api/review';
+import { toPaper, type ApiRecord, type CriterionInfo, type Paper, type PrismaCounts, type ProtocolSettings, type SimilarPairs, type StrategyInfo, type WorkflowStageInfo } from '../../api/review';
 import { batchLimit } from '../../app/plan';
 import { useAuth } from '../../auth/authContext';
 import type { ProjectTab } from './tabs';
@@ -28,6 +29,7 @@ export function useProjectWorkspaceState(projectId: number) {
 
   const [currentProject, setCurrentProject] = useState<ProjectSummary | null>(null);
   const [aiModels, setAiModels] = useState<AiModelInfo[]>([]);
+  const [embeddingModels, setEmbeddingModels] = useState<AiModelInfo[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [projectName, setProjectName] = useState('');
 
@@ -65,6 +67,19 @@ export function useProjectWorkspaceState(projectId: number) {
   const [workflow, setWorkflow] = useState<WorkflowStageInfo[]>([]);
   const [workflowBusy, setWorkflowBusy] = useState(false);
 
+  const [similar, setSimilar] = useState<SimilarPairs | null>(null);
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [similarProgress, setSimilarProgress] = useState<number | null>(null);
+
+  // Stops following background jobs once the workspace closes. Reset on mount, because development mode mounts twice.
+  const unmounted = useRef(false);
+  useEffect(() => {
+    unmounted.current = false;
+    return () => {
+      unmounted.current = true;
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const base = `/api/projects/${projectId}`;
@@ -79,8 +94,9 @@ export function useProjectWorkspaceState(projectId: number) {
       apiRequest('GET', `${base}/prisma`),
       apiRequest('GET', `${base}/workflow`),
       apiRequest('GET', '/api/ai/models'),
+      apiRequest('GET', '/api/ai/models?purpose=embedding'),
     ])
-      .then(([project, protocol, criteria, strategies, fields, synthesis, records, counts, stages, models]) => {
+      .then(([project, protocol, criteria, strategies, fields, synthesis, records, counts, stages, models, embeddingModelList]) => {
         if (cancelled) return;
         const papers = (records as ApiRecord[]).map(toPaper);
         const { inclusion, exclusion } = splitCriteria(criteria);
@@ -102,6 +118,7 @@ export function useProjectWorkspaceState(projectId: number) {
         setRobComplete(papers.some(p => p.rob_data));
         setWorkflow(stages);
         setAiModels(models);
+        setEmbeddingModels(embeddingModelList);
       })
       .catch(err => {
         if (!cancelled) setLoadError(errorMessage(err, 'Could not load this project.'));
@@ -197,6 +214,15 @@ export function useProjectWorkspaceState(projectId: number) {
     }
   };
 
+  const handleEmbeddingModelChange = async (modelId: number) => {
+    try {
+      setCurrentProject(await apiRequest('PUT', `/api/projects/${projectId}/embedding-model`, { ai_model_id: modelId }));
+      setSimilar(null);
+    } catch (err) {
+      alert(errorMessage(err, 'Could not change the similarity model.'));
+    }
+  };
+
   const saveProtocol = async (overrides: Partial<ProtocolSettings> = {}) => {
     const saved: ProtocolSettings = await apiRequest('PUT', projectPath('protocol'), {
       review_type: reviewType,
@@ -211,23 +237,22 @@ export function useProjectWorkspaceState(projectId: number) {
     await loadWorkflow();
   };
 
-  // Sends records to an AI endpoint in batches, merging each batch's stored results as it returns.
-  const runAiBatches = async (endpoint: string, ids: number[], batchSize: number, onProgress: (percent: number) => void, failed: (record: ApiRecord) => boolean) => {
-    let failedBatches = 0;
-    let failedRecords = 0;
-    for (let i = 0; i < ids.length; i += batchSize) {
-      try {
-        const updated: ApiRecord[] = await apiPost(projectPath(endpoint), { record_ids: ids.slice(i, i + batchSize) });
-        failedRecords += updated.filter(failed).length;
-        mergeRecords(updated);
-      } catch (err) {
-        console.error(err);
-        failedBatches++;
-      }
-      onProgress(Math.round((Math.min(i + batchSize, ids.length) / ids.length) * 100));
+  const followJob = (job: AiJob, onProgress: (percent: number) => void) =>
+    waitForJob(job, id => apiRequest('GET', projectPath(`jobs/${id}`)), update => onProgress(jobProgress(update)), {
+      stopped: () => unmounted.current,
+    });
+
+  // Starts a background AI job for the records, follows its progress, then reloads the stored results.
+  const runAiJob = async (endpoint: string, ids: number[], label: string, onProgress: (percent: number) => void) => {
+    try {
+      const job = await followJob(await apiPost(projectPath(endpoint), { record_ids: ids }), onProgress);
+      if (unmounted.current) return;
+      await refreshRecords();
+      const problem = jobProblem(job, label);
+      if (problem) alert(problem);
+    } catch (err) {
+      alert(errorMessage(err, `${label} could not be started.`));
     }
-    await loadWorkflow();
-    return { failedBatches, failedRecords };
   };
 
   // Only a reviewer's decision moves a paper forward; AI suggestions never do.
@@ -366,10 +391,7 @@ export function useProjectWorkspaceState(projectId: number) {
     }
     setAbstractLoading(true);
     setAbstractProgress(0);
-    const { failedBatches, failedRecords } = await runAiBatches('screening/ai', ids, 5, setAbstractProgress, r => Boolean(r.ai_screening?.error));
-    if (failedBatches > 0 || failedRecords > 0) {
-      alert(`AI screening incomplete: ${failedRecords} record(s) failed and ${failedBatches} batch(es) could not be processed. Those records are marked "Error" and need manual screening.`);
-    }
+    await runAiJob('screening/ai', ids, 'AI screening', setAbstractProgress);
     setAbstractLoading(false);
     setTimeout(() => setAbstractProgress(null), 2000);
   };
@@ -382,6 +404,37 @@ export function useProjectWorkspaceState(projectId: number) {
       await loadWorkflow();
     } catch (err) {
       alert(errorMessage(err, 'Could not save your decision.'));
+    }
+  };
+
+  const loadSimilar = async () => {
+    setSimilar(await apiRequest('GET', projectPath('similar-pairs?min_similarity=0.9')));
+  };
+
+  const handleFindSimilar = async () => {
+    setSimilarLoading(true);
+    setSimilarProgress(0);
+    try {
+      const job = await followJob(await apiPost(projectPath('embeddings'), {}), setSimilarProgress);
+      if (!unmounted.current) {
+        const problem = jobProblem(job, 'Comparing records');
+        if (problem) alert(problem);
+        if (job.status === 'completed') await loadSimilar();
+      }
+    } catch (err) {
+      alert(errorMessage(err, 'Could not compare the records.'));
+    }
+    setSimilarLoading(false);
+    setTimeout(() => setSimilarProgress(null), 2000);
+  };
+
+  const handleMarkDuplicate = async (recordId: number, originalId: number) => {
+    try {
+      await apiRequest('PUT', projectPath(`records/${recordId}/duplicate-of`), { duplicate_of_id: originalId });
+      await refreshRecords();
+      await loadSimilar();
+    } catch (err) {
+      alert(errorMessage(err, 'Could not mark the duplicate.'));
     }
   };
 
@@ -413,11 +466,7 @@ export function useProjectWorkspaceState(projectId: number) {
     setFullTextLoading(true);
     setFullTextProgress(0);
     const ids = includedPapers.slice(0, batchLimit('fulltext')).map(p => Number(p.id));
-    // Smaller batches because extraction prompts are larger.
-    const { failedBatches, failedRecords } = await runAiBatches('extraction/ai', ids, 3, setFullTextProgress, r => Boolean(r.extraction?.error));
-    if (failedBatches > 0 || failedRecords > 0) {
-      alert(`AI extraction incomplete: ${failedRecords} record(s) failed and ${failedBatches} batch(es) could not be processed.`);
-    }
+    await runAiJob('extraction/ai', ids, 'AI extraction', setFullTextProgress);
     setFullTextLoading(false);
     setTimeout(() => setFullTextProgress(null), 2000);
   };
@@ -440,10 +489,7 @@ export function useProjectWorkspaceState(projectId: number) {
     setRobLoading(true);
     setRobProgress(0);
     const ids = includedPapers.slice(0, 10).map(p => Number(p.id));
-    const { failedBatches, failedRecords } = await runAiBatches('appraisal/ai', ids, 3, setRobProgress, r => Boolean(r.appraisal?.error));
-    if (failedBatches > 0 || failedRecords > 0) {
-      alert(`Risk of bias assessment incomplete: ${failedRecords} record(s) failed and ${failedBatches} batch(es) could not be processed.`);
-    }
+    await runAiJob('appraisal/ai', ids, 'Risk of bias assessment', setRobProgress);
     setRobComplete(true);
     setRobLoading(false);
     setTimeout(() => setRobProgress(null), 2000);
@@ -474,6 +520,13 @@ export function useProjectWorkspaceState(projectId: number) {
     aiModels,
     aiModelName,
     handleAiModelChange,
+    embeddingModels,
+    handleEmbeddingModelChange,
+    similar,
+    similarLoading,
+    similarProgress,
+    handleFindSimilar,
+    handleMarkDuplicate,
     goTo,
     projectName,
     setProjectName,

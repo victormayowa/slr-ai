@@ -9,6 +9,7 @@ import logging
 import os
 import time
 import weakref
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Literal
@@ -16,7 +17,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ValidationError
 
 from llm import adapters
-from llm.providers import ProviderSpec
+from llm.providers import EMBEDDING_DIMENSIONS, ProviderSpec
 from services.errors import LLMError
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ class Usage:
     latency_ms: int = 0
     attempts: int = 0
 
-    def record(self, reply: adapters.ProviderReply) -> None:
+    def record(self, reply: adapters.ProviderReply | adapters.EmbeddingReply) -> None:
         if reply.input_tokens is not None:
             self.input_tokens = (self.input_tokens or 0) + reply.input_tokens
         if reply.output_tokens is not None:
@@ -76,9 +77,9 @@ def _semaphore(provider_id: str) -> asyncio.Semaphore:
     return per_provider[provider_id]
 
 
-async def _call_with_retries(
-    ai: AIContext, prompt: str, json_schema: dict[str, Any] | None, max_tokens: int, usage: Usage
-) -> adapters.ProviderReply:
+async def _call_with_retries[ReplyT: (adapters.ProviderReply, adapters.EmbeddingReply)](
+    ai: AIContext, request: Callable[[], Awaitable[ReplyT]], usage: Usage
+) -> ReplyT:
     attempt = 0
     while True:
         attempt += 1
@@ -86,12 +87,7 @@ async def _call_with_retries(
         started = time.perf_counter()
         try:
             async with _semaphore(ai.provider.id):
-                reply = await asyncio.wait_for(
-                    adapters.call_provider(
-                        ai.provider, ai.model, prompt, ai.api_key, json_schema=json_schema, max_tokens=max_tokens
-                    ),
-                    CALL_TIMEOUT_SECONDS,
-                )
+                reply = await asyncio.wait_for(request(), CALL_TIMEOUT_SECONDS)
         except LLMError:
             raise
         except Exception as exc:
@@ -105,6 +101,14 @@ async def _call_with_retries(
         usage.latency_ms += round((time.perf_counter() - started) * 1000)
         usage.record(reply)
         return reply
+
+
+def _chat(
+    ai: AIContext, prompt: str, json_schema: dict[str, Any] | None, max_tokens: int
+) -> Callable[[], Awaitable[adapters.ProviderReply]]:
+    return lambda: adapters.call_provider(
+        ai.provider, ai.model, prompt, ai.api_key, json_schema=json_schema, max_tokens=max_tokens
+    )
 
 
 def _inline_refs(node: Any, definitions: dict[str, Any]) -> Any:
@@ -149,7 +153,7 @@ def _with_usage(error: LLMError, usage: Usage) -> LLMError:
 async def complete_text(ai: AIContext, prompt: str, max_tokens: int) -> AIResult[str]:
     usage = Usage()
     try:
-        reply = await _call_with_retries(ai, prompt, None, max_tokens, usage)
+        reply = await _call_with_retries(ai, _chat(ai, prompt, None, max_tokens), usage)
     except LLMError as exc:
         raise _with_usage(exc, usage) from exc.__cause__
     if not reply.text.strip():
@@ -167,7 +171,7 @@ async def complete_structured[ModelT: BaseModel](
         f"{prompt}\n\nRespond with only a JSON object that matches this JSON Schema:\n{json.dumps(json_schema)}"
     )
     try:
-        reply = await _call_with_retries(ai, full_prompt, json_schema, max_tokens, usage)
+        reply = await _call_with_retries(ai, _chat(ai, full_prompt, json_schema, max_tokens), usage)
         try:
             return AIResult(_parse(reply.text, schema), usage)
         except _UnusableReply as first_problem:
@@ -175,7 +179,7 @@ async def complete_structured[ModelT: BaseModel](
                 f"{full_prompt}\n\nYour previous reply could not be used ({first_problem}). "
                 "Reply again with only the corrected JSON object."
             )
-            reply = await _call_with_retries(ai, repair_prompt, json_schema, max_tokens, usage)
+            reply = await _call_with_retries(ai, _chat(ai, repair_prompt, json_schema, max_tokens), usage)
             try:
                 return AIResult(_parse(reply.text, schema), usage)
             except _UnusableReply as second_problem:
@@ -185,3 +189,26 @@ async def complete_structured[ModelT: BaseModel](
                 ) from second_problem
     except LLMError as exc:
         raise _with_usage(exc, usage) from exc.__cause__
+
+
+async def embed(ai: AIContext, texts: list[str]) -> AIResult[list[list[float]]]:
+    """Embed each text as a vector of EMBEDDING_DIMENSIONS numbers. Send at most the provider's embedding batch size."""
+    usage = Usage()
+    try:
+        reply = await _call_with_retries(
+            ai,
+            lambda: adapters.embed_texts(ai.provider, ai.model, texts, ai.api_key, dimensions=EMBEDDING_DIMENSIONS),
+            usage,
+        )
+    except LLMError as exc:
+        raise _with_usage(exc, usage) from exc.__cause__
+    sizes = sorted({len(vector) for vector in reply.vectors})
+    if len(reply.vectors) != len(texts) or sizes != [EMBEDDING_DIMENSIONS]:
+        raise _with_usage(
+            LLMError(
+                f"{ai.provider.label} returned {len(reply.vectors)} embeddings of size {sizes} for {len(texts)} "
+                f"texts; expected size {EMBEDDING_DIMENSIONS}"
+            ),
+            usage,
+        )
+    return AIResult(reply.vectors, usage)

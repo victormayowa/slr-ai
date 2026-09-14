@@ -47,6 +47,31 @@ function AiModelPicker() {
   );
 }
 
+function EmbeddingModelPicker() {
+  const { currentProject, embeddingModels, handleEmbeddingModelChange } = useWorkspace();
+  const pinned = currentProject?.embedding_model ?? null;
+  const selected = embeddingModels.find(model => model.id === pinned?.id);
+  const canChange = currentProject !== null && canEditProject(currentProject.role);
+
+  return (
+    <div>
+      <label htmlFor="project-embedding-model" style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>Similarity Model</label>
+      <select id="project-embedding-model" className="search-input" value={pinned?.id ?? ''} disabled={!canChange} onChange={e => handleEmbeddingModelChange(Number(e.target.value))}>
+        {pinned === null && <option value="">Choose a model</option>}
+        {pinned !== null && selected === undefined && <option value={pinned.id}>{modelDisplayName(pinned)} (no longer offered)</option>}
+        {embeddingModels.map(model => (
+          <option key={model.id} value={model.id}>
+            {modelDisplayName(model)}{model.available === false ? ' (needs an API key)' : ''}
+          </option>
+        ))}
+      </select>
+      <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '8px' }}>
+        Used to find records that say nearly the same thing, such as possible duplicates. After a change, records are compared again with the new model.
+      </p>
+    </div>
+  );
+}
+
 export function SetupScreen() {
   const {
     projectName, setProjectName, reviewType, setReviewType, framework, setFramework, studyDescription, setStudyDescription,
@@ -81,6 +106,7 @@ export function SetupScreen() {
           </select>
         </div>
         <AiModelPicker />
+        <EmbeddingModelPicker />
         <div>
           <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>Description of Study</label>
           <textarea className="search-input" style={{ height: '80px', resize: 'vertical' }} placeholder="Provide a brief overview of your research objectives..." value={studyDescription} onChange={e => setStudyDescription(e.target.value)} />

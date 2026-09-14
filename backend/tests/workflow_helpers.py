@@ -117,9 +117,18 @@ def open_synthesis(client, project_id, headers, fake_provider):
     included, _ = open_extraction(client, project_id, headers, fake_provider)
     body = {"record_ids": [included["id"]]}
     fake_provider(EXTRACTION_REPLY)
-    assert client.post(url(project_id, "extraction/ai"), json=body, headers=headers).status_code == 200
+    run_ai(client, project_id, headers, "extraction/ai", body)
     complete_stage(client, project_id, headers, "extraction")
     fake_provider(APPRAISAL_REPLY)
-    assert client.post(url(project_id, "appraisal/ai"), json=body, headers=headers).status_code == 200
+    run_ai(client, project_id, headers, "appraisal/ai", body)
     complete_stage(client, project_id, headers, "appraisal")
     return included
+
+
+def run_ai(client, project_id, headers, endpoint, body):
+    """Start an AI job (tests run it as soon as it's queued), check it completed, and return its records in order."""
+    response = client.post(url(project_id, endpoint), json=body, headers=headers)
+    assert response.status_code == 202, response.text
+    assert response.json()["status"] == "completed", response.json()
+    records = {record["id"]: record for record in client.get(url(project_id, "records"), headers=headers).json()}
+    return [records[record_id] for record_id in body["record_ids"]]

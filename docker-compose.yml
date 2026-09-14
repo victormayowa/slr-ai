@@ -56,6 +56,27 @@ services:
       redis:
         condition: service_healthy
 
+  # Runs background AI jobs: screening, extraction, and appraisal batches, and record embeddings.
+  worker:
+    build: ./backend
+    command: arq workers.ai_worker.WorkerSettings
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://omnireview:omnireview-dev-password@postgres:5432/omnireview
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-insecure-secret-do-not-use-in-production-0123}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:-ZGV2LW9ubHktaW5zZWN1cmUtZW5jcnlwdGlvbi1rZXk=}
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
   web:
     image: node:20-alpine
     working_dir: /app
