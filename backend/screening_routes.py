@@ -1,13 +1,14 @@
 """AI suggestions (screening, extraction, appraisal, synthesis) and reviewers' screening decisions.
 
 AI output is stored as suggestions with provenance; only a reviewer's decision includes or excludes a record,
-and extraction, appraisal, and synthesis run only on records a reviewer included.
+and extraction, appraisal, and synthesis run only on records a reviewer included. Every AI task uses the project's
+pinned model.
 """
 
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -15,25 +16,25 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import models
+from ai_access import new_ai_run, project_ai, record_usage
 from audit import record_event
 from database import get_db
+from llm.prompts import APPRAISAL_PROMPT, EXTRACTION_PROMPT, SCREENING_PROMPT, SYNTHESIS_PROMPT, PromptTemplate
+from llm.runner import AIContext, AIResult
 from permissions import Permission
 from projects_routes import ProjectAccess, get_in_project, project_access
 from rate_limiting import ai_rate_limit
 from records_routes import record_out, with_record_details
 from review_data import TITLE_ABSTRACT, final_decision
 from services.ai_screening import (
-    APPRAISAL_PROMPT_VERSION,
-    EXTRACTION_PROMPT_VERSION,
-    SCREENING_PROMPT_VERSION,
-    SYNTHESIS_PROMPT_VERSION,
+    Eligibility,
+    ExtractedField,
     assess_risk_of_bias,
     evaluate_eligibility,
     extract_data_from_paper,
-    generate_meta_analysis,
+    generate_narrative_synthesis,
 )
 from services.errors import LLMError
-from services.llm import Provider, model_for
 from workflow import require_stage_open
 
 logger = logging.getLogger(__name__)
@@ -45,15 +46,10 @@ MAX_RECORDS_PER_AI_BATCH = 50
 
 class AIBatchRequest(BaseModel):
     record_ids: list[int] = Field(min_length=1, max_length=MAX_RECORDS_PER_AI_BATCH)
-    provider: Provider = "gemini"
 
 
 class DecisionRequest(BaseModel):
     decision: Literal["include", "exclude", "undecided"]
-
-
-class SynthesisRequest(BaseModel):
-    provider: Provider = "gemini"
 
 
 def _paper_text(record: models.Record) -> str:
@@ -82,31 +78,25 @@ def _require_included(records: list[models.Record]) -> None:
         )
 
 
-async def _run_per_record(
+async def _run_per_record[T](
     db: Session,
     access: ProjectAccess,
+    ai: AIContext,
     records: list[models.Record],
     task: str,
-    provider: str,
-    prompt_version: str,
-    call: Callable[[models.Record], Awaitable[dict[str, Any]]],
-    store: Callable[[models.AIRun, dict[str, Any]], None],
+    prompt: PromptTemplate,
+    call: Callable[[models.Record], Awaitable[AIResult[T]]],
+    store: Callable[[models.AIRun, T], None],
 ) -> list[dict]:
     """Run an AI task per record, storing each outcome, including failures, as an AIRun."""
     outcomes = await asyncio.gather(*(call(record) for record in records), return_exceptions=True)
     failed = 0
     for record, outcome in zip(records, outcomes, strict=True):
-        run = models.AIRun(
-            project_id=access.project.id,
-            task=task,
-            provider=provider,
-            model=model_for(provider),
-            prompt_version=prompt_version,
-            triggered_by_id=access.user.id,
-        )
+        run = new_ai_run(access, task, prompt, ai)
         record.ai_runs.append(run)
         if isinstance(outcome, LLMError):
             run.status, run.error = "failed", str(outcome)
+            record_usage(run, ai, outcome.usage)
             failed += 1
         elif isinstance(outcome, Exception):
             logger.error("Unexpected error during AI %s", task, exc_info=outcome)
@@ -116,7 +106,8 @@ async def _run_per_record(
             raise outcome
         else:
             run.status = "succeeded"
-            store(run, outcome)
+            record_usage(run, ai, outcome.usage)
+            store(run, outcome.value)
     db.flush()
 
     record_event(
@@ -126,9 +117,10 @@ async def _run_per_record(
         action=f"ai.{task}",
         entity_type="record",
         details={
-            "provider": provider,
-            "model": model_for(provider),
-            "prompt_version": prompt_version,
+            "provider": ai.provider.id,
+            "model": ai.model,
+            "prompt_version": prompt.id,
+            "key_source": ai.key_source,
             "record_ids": [record.id for record in records],
             "failed": failed,
         },
@@ -159,19 +151,20 @@ async def suggest_screening_decisions(
     records = _load_records(db, access.project.id, body.record_ids)
     if any(record.duplicate_of_id is not None for record in records):
         raise HTTPException(status_code=400, detail="Duplicate records are not screened")
+    ai = project_ai(db, access)
 
-    async def call(record: models.Record) -> dict[str, Any]:
-        return await evaluate_eligibility(_paper_text(record), criteria_text, body.provider)
+    async def call(record: models.Record) -> AIResult[Eligibility]:
+        return await evaluate_eligibility(ai, _paper_text(record), criteria_text)
 
-    def store(run: models.AIRun, result: dict[str, Any]) -> None:
-        quote = result.get("supporting_quote")
+    def store(run: models.AIRun, result: Eligibility) -> None:
         run.screening = models.ScreeningSuggestion(
-            decision=result["decision"],
-            reasoning=str(result.get("reasoning") or ""),
-            supporting_quote=None if quote is None else str(quote),
+            decision=result.decision,
+            reasoning=result.reasoning,
+            supporting_quote=result.supporting_quote,
+            quote_verified=result.quote_verified,
         )
 
-    return await _run_per_record(db, access, records, "screening", body.provider, SCREENING_PROMPT_VERSION, call, store)
+    return await _run_per_record(db, access, ai, records, "screening", SCREENING_PROMPT, call, store)
 
 
 @router.put("/records/{record_id}/decision")
@@ -225,20 +218,23 @@ async def suggest_extraction(
     _require_included(records)
     field_names = [field.name for field in fields]
     fields_by_name = {field.name: field for field in fields}
+    ai = project_ai(db, access)
 
-    async def call(record: models.Record) -> dict[str, Any]:
-        return await extract_data_from_paper(_paper_text(record), field_names, body.provider)
+    async def call(record: models.Record) -> AIResult[list[ExtractedField]]:
+        return await extract_data_from_paper(ai, _paper_text(record), field_names)
 
-    def store(run: models.AIRun, result: dict[str, Any]) -> None:
+    def store(run: models.AIRun, extracted: list[ExtractedField]) -> None:
         run.extraction_values = [
-            models.ExtractionSuggestion(field=fields_by_name[name], value=str(value))
-            for name, value in result.items()
-            if name in fields_by_name
+            models.ExtractionSuggestion(
+                field=fields_by_name[item.field],
+                value=item.value,
+                evidence_quote=item.quote,
+                quote_verified=item.quote_verified,
+            )
+            for item in extracted
         ]
 
-    return await _run_per_record(
-        db, access, records, "extraction", body.provider, EXTRACTION_PROMPT_VERSION, call, store
-    )
+    return await _run_per_record(db, access, ai, records, "extraction", EXTRACTION_PROMPT, call, store)
 
 
 @router.post("/appraisal/ai", dependencies=[Depends(ai_rate_limit)])
@@ -253,14 +249,15 @@ async def suggest_appraisal(
     tool = access.project.protocol.rob_tool
     records = _load_records(db, access.project.id, body.record_ids)
     _require_included(records)
+    ai = project_ai(db, access)
 
-    async def call(record: models.Record) -> dict[str, Any]:
-        return await assess_risk_of_bias(_paper_text(record), tool, body.provider)
+    async def call(record: models.Record) -> AIResult[dict[str, str]]:
+        return await assess_risk_of_bias(ai, _paper_text(record), tool)
 
-    def store(run: models.AIRun, result: dict[str, Any]) -> None:
-        run.appraisal = models.AppraisalSuggestion(tool=tool, judgments=result)
+    def store(run: models.AIRun, judgments: dict[str, str]) -> None:
+        run.appraisal = models.AppraisalSuggestion(tool=tool, judgments=judgments)
 
-    return await _run_per_record(db, access, records, "appraisal", body.provider, APPRAISAL_PROMPT_VERSION, call, store)
+    return await _run_per_record(db, access, ai, records, "appraisal", APPRAISAL_PROMPT, call, store)
 
 
 def synthesis_out(report: models.SynthesisReport) -> dict:
@@ -276,7 +273,6 @@ def synthesis_out(report: models.SynthesisReport) -> dict:
 
 @router.post("/synthesis", status_code=201, dependencies=[Depends(ai_rate_limit)])
 async def create_synthesis(
-    body: SynthesisRequest,
     access: ProjectAccess = Depends(project_access(Permission.RUN_ANALYSIS)),
     db: Session = Depends(get_db),
 ):
@@ -303,25 +299,21 @@ async def create_synthesis(
         }
         for record in included
     ]
-    run = models.AIRun(
-        project_id=access.project.id,
-        task="synthesis",
-        provider=body.provider,
-        model=model_for(body.provider),
-        prompt_version=SYNTHESIS_PROMPT_VERSION,
-        triggered_by_id=access.user.id,
-    )
+    ai = project_ai(db, access)
+    run = new_ai_run(access, "synthesis", SYNTHESIS_PROMPT, ai)
     try:
-        result = await generate_meta_analysis(study_data, body.provider)
+        result = await generate_narrative_synthesis(ai, study_data)
     except LLMError as exc:
         run.status, run.error = "failed", str(exc)
+        record_usage(run, ai, exc.usage)
         db.add(run)
         db.commit()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     run.status = "succeeded"
+    record_usage(run, ai, result.usage)
     report = models.SynthesisReport(
-        project_id=access.project.id, ai_run=run, content=result["report"], record_count=len(included)
+        project_id=access.project.id, ai_run=run, content=result.value, record_count=len(included)
     )
     db.add(report)
     db.flush()
@@ -332,7 +324,12 @@ async def create_synthesis(
         action="ai.synthesis",
         entity_type="synthesis_report",
         entity_id=report.id,
-        details={"provider": run.provider, "model": run.model, "records": len(included)},
+        details={
+            "provider": run.provider,
+            "model": run.model,
+            "prompt_version": run.prompt_version,
+            "records": len(included),
+        },
     )
     db.commit()
     return synthesis_out(report)

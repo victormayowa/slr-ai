@@ -1,7 +1,23 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, true
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+    func,
+    text,
+    true,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +51,47 @@ class User(Base):
     @property
     def full_name(self) -> str:
         return f"{self.first_name} {self.last_name}"
+
+
+class UserAPIKey(Base):
+    """A user's own key for an AI provider, encrypted with crypto.encrypt. Never returned to the browser."""
+
+    __tablename__ = "user_api_keys"
+    __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_user_api_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # An llm.providers.PROVIDERS key.
+    provider: Mapped[str] = mapped_column(String(20))
+    encrypted_key: Mapped[bytes] = mapped_column(LargeBinary)
+    last_four: Mapped[str] = mapped_column(String(4))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AIModel(Base):
+    """A model projects can pin. Every AI run in a project uses its pinned model until someone changes it."""
+
+    __tablename__ = "ai_models"
+    __table_args__ = (
+        UniqueConstraint("provider", "model_id", name="uq_ai_model"),
+        Index("uq_ai_models_single_default", "is_default", unique=True, postgresql_where=text("is_default")),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # An llm.providers.PROVIDERS key.
+    provider: Mapped[str] = mapped_column(String(20))
+    # The provider's model ID, sent with each request.
+    model_id: Mapped[str] = mapped_column(String(100))
+    label: Mapped[str] = mapped_column(String(200))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    # The model new projects start with; at most one.
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # US dollars per million tokens. When unknown, run costs are left blank rather than estimated.
+    input_price_per_mtok: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    output_price_per_mtok: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, server_default=func.now())
 
 
 class Organization(Base):
@@ -75,9 +132,14 @@ class Project(Base):
     )
     # The user who created the project. Access is governed by ProjectMember roles, not this column.
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    # The AI model every AI task in this project uses.
+    ai_model_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ai_models.id", ondelete="SET NULL", name="fk_projects_ai_model_id")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     organization: Mapped[Organization | None] = relationship()
+    ai_model: Mapped[AIModel | None] = relationship()
     members: Mapped[list["ProjectMember"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     protocol: Mapped["Protocol | None"] = relationship(back_populates="project", cascade="all, delete-orphan")
     extraction_fields: Mapped[list["ExtractionField"]] = relationship(
@@ -206,6 +268,15 @@ class AIRun(Base):
     # "succeeded" or "failed"
     status: Mapped[str] = mapped_column(String(10))
     error: Mapped[str | None] = mapped_column(Text)
+    # "user" when the triggering user's own API key paid for the call, "platform" for the server's key.
+    key_source: Mapped[str | None] = mapped_column(String(10))
+    # Summed over every attempt, including retries and repairs. Null when the provider didn't report it.
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    # Null when the model's prices aren't in the catalog.
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    attempts: Mapped[int | None] = mapped_column(Integer)
     triggered_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -226,6 +297,8 @@ class ScreeningSuggestion(Base):
     decision: Mapped[str] = mapped_column(String(10))
     reasoning: Mapped[str] = mapped_column(Text, default="")
     supporting_quote: Mapped[str | None] = mapped_column(Text)
+    # Whether supporting_quote appears in the record's text; null when there is no quote.
+    quote_verified: Mapped[bool | None] = mapped_column(Boolean)
 
 
 TITLE_ABSTRACT = "title_abstract"
@@ -266,6 +339,10 @@ class ExtractionSuggestion(Base):
     ai_run_id: Mapped[int] = mapped_column(ForeignKey("ai_runs.id", ondelete="CASCADE"), index=True)
     field_id: Mapped[int] = mapped_column(ForeignKey("extraction_fields.id", ondelete="CASCADE"))
     value: Mapped[str] = mapped_column(Text)
+    # The passage the AI says the value comes from, and whether it appears in the record's text.
+    # quote_verified is null when no value was reported.
+    evidence_quote: Mapped[str | None] = mapped_column(Text)
+    quote_verified: Mapped[bool | None] = mapped_column(Boolean)
 
     field: Mapped[ExtractionField] = relationship()
 

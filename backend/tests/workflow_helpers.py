@@ -1,5 +1,14 @@
 """Helpers for driving a project through the review workflow in tests."""
 
+
+class ProviderHTTPError(Exception):
+    """Stands in for an AI SDK error carrying an HTTP status. Its text includes a fake secret that must never leak."""
+
+    def __init__(self, status_code: int):
+        super().__init__(f"HTTP {status_code}: request with key sk-secret-123 failed")
+        self.status_code = status_code
+
+
 PROTOCOL = {
     "review_type": "Systematic Review",
     "framework": "PICO",
@@ -12,6 +21,11 @@ GENERATED_PROTOCOL = (
     '{"inclusion_criteria": ["Adults", "Randomized trials"], "exclusion_criteria": ["Children"],'
     ' "boolean_searches": [{"database": "PubMed", "string": "aspirin[tiab]"},'
     ' {"database": "Embase", "string": "aspirin"}]}'
+)
+EXTRACTION_REPLY = '{"values": [{"field": "Sample Size", "value": 120, "quote": "Adults randomized to aspirin."}]}'
+APPRAISAL_REPLY = (
+    '{"domains": [{"domain": "D1: Randomization", "judgment": "Low", "rationale": "Randomized."}],'
+    ' "overall": "Low Risk"}'
 )
 RECORDS = [
     {"title": "Aspirin trial", "doi": "10.1/a", "abstract": "Adults randomized to aspirin."},
@@ -47,7 +61,7 @@ def import_records(client, project_id, headers, records=RECORDS, file_name="expo
 def generate_protocol(client, project_id, headers, fake_provider):
     assert client.put(url(project_id, "protocol"), json=PROTOCOL, headers=headers).status_code == 200
     fake_provider(GENERATED_PROTOCOL)
-    response = client.post(url(project_id, "protocol/generate"), json={"provider": "gemini"}, headers=headers)
+    response = client.post(url(project_id, "protocol/generate"), headers=headers)
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -101,11 +115,11 @@ def open_extraction(client, project_id, headers, fake_provider):
 def open_synthesis(client, project_id, headers, fake_provider):
     """Run and sign off extraction and appraisal for the included record. Returns it."""
     included, _ = open_extraction(client, project_id, headers, fake_provider)
-    body = {"record_ids": [included["id"]], "provider": "gemini"}
-    fake_provider('{"Sample Size": 120}')
+    body = {"record_ids": [included["id"]]}
+    fake_provider(EXTRACTION_REPLY)
     assert client.post(url(project_id, "extraction/ai"), json=body, headers=headers).status_code == 200
     complete_stage(client, project_id, headers, "extraction")
-    fake_provider('{"D1: Randomization": "Low", "Overall": "Low Risk"}')
+    fake_provider(APPRAISAL_REPLY)
     assert client.post(url(project_id, "appraisal/ai"), json=body, headers=headers).status_code == 200
     complete_stage(client, project_id, headers, "appraisal")
     return included

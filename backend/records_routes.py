@@ -58,7 +58,13 @@ def with_record_details(query: Select) -> Select:
 
 
 def _run_meta(run: models.AIRun) -> dict:
-    return {"provider": run.provider, "model": run.model, "error": run.error, "created_at": run.created_at}
+    return {
+        "provider": run.provider,
+        "model": run.model,
+        "key_source": run.key_source,
+        "error": run.error,
+        "created_at": run.created_at,
+    }
 
 
 def record_out(record: models.Record, user_id: int) -> dict:
@@ -84,11 +90,19 @@ def record_out(record: models.Record, user_id: int) -> dict:
             "decision": screening.screening.decision if screening.screening else None,
             "reasoning": screening.screening.reasoning if screening.screening else None,
             "supporting_quote": screening.screening.supporting_quote if screening.screening else None,
+            "quote_verified": screening.screening.quote_verified if screening.screening else None,
         },
         "my_decision": my_decision,
         "final_decision": final_decision(record),
         "extraction": extraction
-        and {**_run_meta(extraction), "values": {v.field.name: v.value for v in extraction.extraction_values}},
+        and {
+            **_run_meta(extraction),
+            "values": {v.field.name: v.value for v in extraction.extraction_values},
+            "evidence": {
+                v.field.name: {"quote": v.evidence_quote, "verified": v.quote_verified}
+                for v in extraction.extraction_values
+            },
+        },
         "appraisal": appraisal
         and {
             **_run_meta(appraisal),

@@ -109,7 +109,7 @@ def _get_or_create_project(
     project.description = description
     project.organization = organization
     project.owner_id = creator.id
-    apply_project_defaults(project)
+    apply_project_defaults(db, project)
     return project
 
 

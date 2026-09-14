@@ -1,9 +1,12 @@
 import pytest
 from sqlalchemy import select
 from workflow_helpers import (
+    APPRAISAL_REPLY,
+    EXTRACTION_REPLY,
     GENERATED_PROTOCOL,
     PROTOCOL,
     RECORDS,
+    ProviderHTTPError,
     add_member,
     complete_stage,
     create_project,
@@ -89,12 +92,15 @@ def test_generated_protocol_is_stored_with_provenance(client, project, fake_prov
     assert generated["extraction_fields"][-2:] == ["Country", "Follow-up"]
     with SessionLocal() as db:
         run = db.scalar(select(models.AIRun).where(models.AIRun.project_id == project_id))
-        assert (run.task, run.status, run.provider, run.prompt_version) == (
+        assert (run.task, run.status, run.provider, run.model, run.prompt_version, run.key_source) == (
             "protocol",
             "succeeded",
             "gemini",
-            "protocol-v1",
+            "gemini-3.8-flash",
+            "protocol-v2",
+            "platform",
         )
+        assert (run.input_tokens, run.output_tokens, run.attempts) == (100, 20, 1)
 
 
 def test_regenerating_keeps_criteria_a_reviewer_has_accepted(client, project, fake_provider):
@@ -110,18 +116,21 @@ def test_regenerating_keeps_criteria_a_reviewer_has_accepted(client, project, fa
     assert statuses.count((False, "pending")) == 3
 
 
-def test_failed_generation_is_recorded_and_changes_nothing(client, project):
+def test_failed_generation_is_recorded_and_changes_nothing(client, project, fake_provider):
     project_id, headers = project
     client.put(url(project_id, "protocol"), json=PROTOCOL, headers=headers)
+    fake_provider(ProviderHTTPError(401))
 
-    response = client.post(url(project_id, "protocol/generate"), json={"provider": "openai"}, headers=headers)
+    response = client.post(url(project_id, "protocol/generate"), headers=headers)
 
     assert response.status_code == 502
+    assert "rejected the API key" in response.json()["detail"]
+    assert "sk-secret-123" not in response.text
     assert client.get(url(project_id, "criteria"), headers=headers).json() == []
     with SessionLocal() as db:
         run = db.scalar(select(models.AIRun).where(models.AIRun.project_id == project_id))
-        assert run.status == "failed"
-        assert "OPENAI_API_KEY" in run.error
+        assert (run.status, run.attempts) == ("failed", 1)
+        assert "rejected the API key" in run.error
 
 
 def test_accept_all_only_accepts_that_kind(client, project, fake_provider):
@@ -248,27 +257,43 @@ def test_ai_screening_waits_for_search_to_be_signed_off(client, project, fake_pr
 def test_ai_screening_suggests_but_never_decides(client, project, fake_provider):
     project_id, headers = project
     records = open_screening(client, project_id, headers, fake_provider)
-    fake_provider('{"decision": "Include", "reasoning": "Adults in a trial", "supporting_quote": "randomized"}')
+    fake_provider('{"decision": "Include", "reasoning": "Adults in a trial", "supporting_quote": "Adults  RANDOMIZED"}')
 
-    body = {"record_ids": [r["id"] for r in records], "provider": "gemini"}
+    body = {"record_ids": [r["id"] for r in records]}
     screened = client.post(url(project_id, "screening/ai"), json=body, headers=headers).json()
 
     assert [(r["ai_screening"]["decision"], r["final_decision"]) for r in screened] == [("Include", None)] * 2
+    assert [r["ai_screening"]["quote_verified"] for r in screened] == [True, True]
     assert client.get(url(project_id, "prisma"), headers=headers).json()["included"] == 0
+
+
+def test_quotes_missing_from_the_record_are_flagged_as_unverified(client, project, fake_provider):
+    project_id, headers = project
+    record_id = open_screening(client, project_id, headers, fake_provider)[0]["id"]
+    fake_provider(
+        '{"decision": "Include", "reasoning": "r", "supporting_quote": "a double-blind trial of 9,000 adults"}'
+    )
+
+    body = {"record_ids": [record_id]}
+    screened = client.post(url(project_id, "screening/ai"), json=body, headers=headers).json()[0]
+
+    assert screened["ai_screening"]["quote_verified"] is False
 
 
 def test_unusable_ai_screening_output_is_stored_as_an_error(client, project, fake_provider):
     project_id, headers = project
     record_id = open_screening(client, project_id, headers, fake_provider)[0]["id"]
-    fake_provider('{"decision": "Probably", "reasoning": "unsure"}')
+    calls = fake_provider('{"decision": "Probably", "reasoning": "unsure"}')
+    calls.clear()
 
-    body = {"record_ids": [record_id], "provider": "gemini"}
+    body = {"record_ids": [record_id]}
     screened = client.post(url(project_id, "screening/ai"), json=body, headers=headers).json()[0]
 
     assert screened["ai_screening"]["decision"] is None
-    assert "valid decision" in screened["ai_screening"]["error"]
+    assert "required structure" in screened["ai_screening"]["error"]
+    assert len(calls) == 2, "an unusable reply gets exactly one repair attempt"
     stored = client.get(url(project_id, "records"), headers=headers).json()[0]
-    assert "valid decision" in stored["ai_screening"]["error"]
+    assert "required structure" in stored["ai_screening"]["error"]
 
 
 def test_reviewer_decisions_drive_prisma_and_are_audited(client, project, fake_provider):
@@ -323,12 +348,12 @@ def test_duplicate_records_cannot_be_decided(client, project, fake_provider):
 def test_extraction_and_appraisal_run_only_on_included_records(client, project, fake_provider):
     project_id, headers = project
     included, excluded = open_extraction(client, project_id, headers, fake_provider)
-    fake_provider('{"Sample Size": 120}')
+    fake_provider(EXTRACTION_REPLY)
 
-    excluded_body = {"record_ids": [excluded["id"]], "provider": "gemini"}
+    excluded_body = {"record_ids": [excluded["id"]]}
     assert client.post(url(project_id, "extraction/ai"), json=excluded_body, headers=headers).status_code == 400
 
-    body = {"record_ids": [included["id"]], "provider": "gemini"}
+    body = {"record_ids": [included["id"]]}
     extracted = client.post(url(project_id, "extraction/ai"), json=body, headers=headers).json()[0]
     assert extracted["extraction"]["values"] == {
         "Sample Size": "120",
@@ -338,13 +363,19 @@ def test_extraction_and_appraisal_run_only_on_included_records(client, project, 
         "Country": "Missing from AI response",
         "Follow-up": "Missing from AI response",
     }
+    assert extracted["extraction"]["evidence"]["Sample Size"] == {
+        "quote": "Adults randomized to aspirin.",
+        "verified": True,
+    }
+    assert extracted["extraction"]["evidence"]["Mean Age"] == {"quote": None, "verified": None}
     complete_stage(client, project_id, headers, "extraction")
 
-    fake_provider('{"D1: Randomization": "Low"}')
+    fake_provider(APPRAISAL_REPLY)
     appraised = client.post(url(project_id, "appraisal/ai"), json=body, headers=headers).json()[0]
     assert appraised["appraisal"]["tool"] == "ROB-2"
     assert appraised["appraisal"]["judgments"]["D1: Randomization"] == "Low"
-    assert appraised["appraisal"]["judgments"]["Overall"] == "Missing from AI response"
+    assert appraised["appraisal"]["judgments"]["D2: Deviations"] == "Missing from AI response"
+    assert appraised["appraisal"]["judgments"]["Overall"] == "Low Risk"
 
 
 def test_screeners_cannot_run_extraction(client, project, make_user):
@@ -371,7 +402,7 @@ def test_synthesis_is_saved_and_retrievable(client, project, fake_provider):
     open_synthesis(client, project_id, headers, fake_provider)
     fake_provider("## Narrative synthesis\nOne included trial.")
 
-    created = client.post(url(project_id, "synthesis"), json={"provider": "gemini"}, headers=headers)
+    created = client.post(url(project_id, "synthesis"), headers=headers)
 
     assert created.status_code == 201
     assert created.json()["record_count"] == 1

@@ -7,11 +7,16 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
+import models
+from ai_access import resolve_ai
+from ai_catalog import default_model
+from ai_routes import router as ai_router
 from audit_routes import router as audit_router
 from auth_routes import get_current_user
 from auth_routes import router as auth_router
-from database import engine
+from database import engine, get_db
 from observability import RequestIdMiddleware, configure_logging, configure_sentry
 from projects_routes import router as projects_router
 from rate_limiting import ai_rate_limit
@@ -21,7 +26,6 @@ from screening_routes import router as screening_router
 from security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 from services.ai_screening import answer_faq
 from services.errors import LLMError
-from services.llm import Provider
 from workflow import WorkflowError
 from workflow_routes import router as workflow_router
 
@@ -71,6 +75,7 @@ app.include_router(records_router)
 app.include_router(screening_router)
 app.include_router(audit_router)
 app.include_router(workflow_router)
+app.include_router(ai_router)
 
 
 @app.exception_handler(WorkflowError)
@@ -84,15 +89,20 @@ api = APIRouter(prefix="/api", dependencies=[Depends(get_current_user), Depends(
 
 class ChatRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2_000)
-    provider: Provider = "gemini"
 
 
 @api.post("/chat")
-async def api_chat_faq(req: ChatRequest):
+async def api_chat_faq(req: ChatRequest, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The support assistant uses the catalog's default model, with the caller's own key when they've saved one."""
+    model = default_model(db)
+    if model is None:
+        raise HTTPException(status_code=503, detail="The assistant is unavailable because no default AI model is set")
+    ai = resolve_ai(db, model, user)
     try:
-        return await answer_faq(req.query, req.provider)
+        result = await answer_faq(ai, req.query)
     except LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"answer": result.value}
 
 
 # Included after the routes are declared; FastAPI copies a router's routes at include time.

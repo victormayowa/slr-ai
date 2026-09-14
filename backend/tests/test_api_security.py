@@ -11,6 +11,9 @@ PROTECTED_ROUTES = [
     ("POST", "/api/projects/1/screening/ai"),
     ("GET", "/api/projects/1/audit"),
     ("POST", "/api/chat"),
+    ("GET", "/api/ai/models"),
+    ("PUT", "/api/me/api-keys/openai"),
+    ("POST", "/api/me/api-keys/openai/test"),
 ]
 
 
@@ -36,15 +39,20 @@ def test_expired_token_rejected(client):
     assert client.post("/api/chat", json={"query": "hi"}, headers=headers).status_code == 401
 
 
-def test_unconfigured_provider_returns_502_with_reason(client, auth_headers):
-    response = client.post("/api/chat", json={"query": "hi", "provider": "openai"}, headers=auth_headers)
+def test_assistant_without_an_api_key_explains_how_to_add_one(client, auth_headers):
+    response = client.post("/api/chat", json={"query": "hi"}, headers=auth_headers)
 
-    assert response.status_code == 502
-    assert "OPENAI_API_KEY" in response.json()["detail"]
+    assert response.status_code == 400
+    assert "Settings" in response.json()["detail"]
 
 
-def test_unknown_provider_rejected(client, auth_headers):
-    assert client.post("/api/chat", json={"query": "hi", "provider": "bogus"}, headers=auth_headers).status_code == 422
+def test_assistant_answers_with_the_default_model(client, auth_headers, fake_provider):
+    calls = fake_provider("OmniReview keeps an audit trail.")
+
+    response = client.post("/api/chat", json={"query": "Is there an audit trail?"}, headers=auth_headers)
+
+    assert response.json() == {"answer": "OmniReview keeps an audit trail."}
+    assert (calls[0]["provider"], calls[0]["model"]) == ("gemini", "gemini-3.8-flash")
 
 
 def test_cors_does_not_allow_unknown_origin(client):

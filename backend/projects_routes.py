@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import models
+from ai_catalog import ai_model_out, model_ref
 from audit import record_event
 from auth_routes import get_current_user
 from database import Base, get_db
@@ -27,6 +28,10 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=300)
     description: str | None = Field(None, max_length=5000)
+
+
+class AIModelSelection(BaseModel):
+    ai_model_id: int
 
 
 class MemberAdd(BaseModel):
@@ -90,6 +95,7 @@ def _project_out(project: models.Project, role: str) -> dict:
             {"id": project.organization.id, "name": project.organization.name} if project.organization else None
         ),
         "role": role,
+        "ai_model": ai_model_out(project.ai_model) if project.ai_model else None,
         "member_count": len(project.members),
         "created_at": project.created_at,
     }
@@ -144,7 +150,7 @@ def create_project(body: ProjectCreate, user: models.User = Depends(get_current_
         title=body.title, description=body.description, organization_id=body.organization_id, owner_id=user.id
     )
     project.members.append(models.ProjectMember(user_id=user.id, role=ProjectRole.OWNER))
-    apply_project_defaults(project)
+    apply_project_defaults(db, project)
     db.add(project)
     db.flush()
     record_event(
@@ -186,6 +192,32 @@ def update_project(
             entity_type="project",
             entity_id=access.project.id,
             details={"changes": updates},
+        )
+    db.commit()
+    return _project_out(access.project, access.membership.role)
+
+
+@router.put("/{project_id}/ai-model")
+def set_project_ai_model(
+    body: AIModelSelection,
+    access: ProjectAccess = Depends(project_access(Permission.EDIT_PROJECT)),
+    db: Session = Depends(get_db),
+):
+    """Pin the model used for every AI task in the project. Earlier runs keep a record of the model they used."""
+    model = db.get(models.AIModel, body.ai_model_id)
+    if model is None or not model.enabled:
+        raise HTTPException(status_code=404, detail="That AI model isn't available")
+    previous = access.project.ai_model
+    if previous is None or previous.id != model.id:
+        access.project.ai_model = model
+        record_event(
+            db,
+            project_id=access.project.id,
+            actor_id=access.user.id,
+            action="project.ai_model_changed",
+            entity_type="project",
+            entity_id=access.project.id,
+            details={"from": model_ref(previous), "to": model_ref(model)},
         )
     db.commit()
     return _project_out(access.project, access.membership.role)

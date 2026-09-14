@@ -8,16 +8,16 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 import models
+from ai_access import new_ai_run, project_ai, record_usage
 from audit import record_event
 from database import get_db
+from llm.prompts import PROTOCOL_PROMPT
 from permissions import Permission
 from projects_routes import ProjectAccess, get_in_project, project_access
 from rate_limiting import ai_rate_limit
-from services.ai_protocol import PROMPT_VERSION as PROTOCOL_PROMPT_VERSION
 from services.ai_protocol import generate_protocol_elements
 from services.ai_screening import ROB_TOOL_DOMAINS
 from services.errors import LLMError
-from services.llm import Provider, model_for
 from workflow import require_stage_open
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["protocol"])
@@ -32,10 +32,6 @@ class ProtocolUpdate(BaseModel):
     suggested_criteria: str = Field(max_length=20_000)
     extraction_outline: str = Field(max_length=20_000)
     rob_tool: str = Field(max_length=30)
-
-
-class GenerateProtocolRequest(BaseModel):
-    provider: Provider = "gemini"
 
 
 class CriterionUpdate(BaseModel):
@@ -149,7 +145,6 @@ def update_protocol(
 
 @router.post("/protocol/generate", dependencies=[Depends(ai_rate_limit)])
 async def generate_protocol(
-    body: GenerateProtocolRequest,
     access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)),
     db: Session = Depends(get_db),
 ):
@@ -167,38 +162,31 @@ async def generate_protocol(
             f"Suggested Criteria: {protocol.suggested_criteria}",
         ]
     )
-    run = models.AIRun(
-        project_id=project.id,
-        task="protocol",
-        provider=body.provider,
-        model=model_for(body.provider),
-        prompt_version=PROTOCOL_PROMPT_VERSION,
-        triggered_by_id=access.user.id,
-    )
+    ai = project_ai(db, access)
+    run = new_ai_run(access, "protocol", PROTOCOL_PROMPT, ai)
     try:
-        generated = await generate_protocol_elements(research_question, body.provider)
+        result = await generate_protocol_elements(ai, research_question)
     except LLMError as exc:
         run.status, run.error = "failed", str(exc)
+        record_usage(run, ai, exc.usage)
         db.add(run)
         db.commit()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     run.status = "succeeded"
+    record_usage(run, ai, result.usage)
+    generated = result.value
     db.add(run)
     # Regenerating replaces suggestions nobody has acted on; accepted and rejected criteria are kept.
     db.execute(
         delete(models.Criterion).where(models.Criterion.project_id == project.id, models.Criterion.status == "pending")
     )
     db.execute(delete(models.SearchStrategy).where(models.SearchStrategy.project_id == project.id))
-    for kind, key in (("inclusion", "inclusion_criteria"), ("exclusion", "exclusion_criteria")):
-        for text in generated[key]:
+    for kind, texts in (("inclusion", generated.inclusion_criteria), ("exclusion", generated.exclusion_criteria)):
+        for text in texts:
             db.add(models.Criterion(project_id=project.id, kind=kind, text=text[:2000], status="pending"))
-    for search in generated["boolean_searches"]:
-        db.add(
-            models.SearchStrategy(
-                project_id=project.id, database=str(search["database"])[:100], query=str(search["string"])
-            )
-        )
+    for search in generated.boolean_searches:
+        db.add(models.SearchStrategy(project_id=project.id, database=search.database[:100], query=search.string))
     added_fields = _add_extraction_fields(project, protocol.extraction_outline.splitlines())
     db.flush()
 
@@ -212,8 +200,10 @@ async def generate_protocol(
         details={
             "provider": run.provider,
             "model": run.model,
-            "criteria_suggested": len(generated["inclusion_criteria"]) + len(generated["exclusion_criteria"]),
-            "search_strategies": len(generated["boolean_searches"]),
+            "prompt_version": run.prompt_version,
+            "key_source": run.key_source,
+            "criteria_suggested": len(generated.inclusion_criteria) + len(generated.exclusion_criteria),
+            "search_strategies": len(generated.boolean_searches),
             "extraction_fields_added": added_fields,
         },
     )
