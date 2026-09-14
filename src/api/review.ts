@@ -40,7 +40,10 @@ export type WorkflowStageInfo = {
 
 type Decision = 'include' | 'exclude' | 'undecided';
 
-type AiRunInfo = { provider: string; model: string; error: string | null; created_at: string };
+type AiRunInfo = { provider: string; model: string; key_source: 'user' | 'platform' | null; error: string | null; created_at: string };
+
+// A quote the AI gave as evidence, and whether it was found in the record's text (null when there is nothing to check).
+export type EvidenceInfo = { quote: string | null; verified: boolean | null };
 
 export type ApiRecord = {
   id: number;
@@ -52,10 +55,10 @@ export type ApiRecord = {
   abstract: string;
   source: string;
   duplicate_of_id: number | null;
-  ai_screening: (AiRunInfo & { decision: string | null; reasoning: string | null; supporting_quote: string | null }) | null;
+  ai_screening: (AiRunInfo & { decision: string | null; reasoning: string | null; supporting_quote: string | null; quote_verified: boolean | null }) | null;
   my_decision: Decision | null;
   final_decision: Decision | null;
-  extraction: (AiRunInfo & { values: Record<string, string> }) | null;
+  extraction: (AiRunInfo & { values: Record<string, string>; evidence: Record<string, EvidenceInfo> }) | null;
   appraisal: (AiRunInfo & { tool: string | null; judgments: Record<string, string> | null }) | null;
 };
 
@@ -70,9 +73,12 @@ export type Paper = {
   abstract?: string;
   ai_decision?: string;
   ai_reasoning?: string;
+  ai_quote?: string;
+  ai_quote_verified?: boolean;
   ai_error?: string;
   user_decision?: 'Include' | 'Exclude' | 'Undecided' | null;
   extracted_data?: Record<string, string>;
+  extraction_evidence?: Record<string, EvidenceInfo>;
   extraction_error?: string;
   rob_data?: Record<string, string>;
   rob_error?: string;
@@ -92,9 +98,12 @@ export const toPaper = (record: ApiRecord): Paper => ({
   abstract: record.abstract,
   ai_decision: record.ai_screening?.decision ?? undefined,
   ai_reasoning: record.ai_screening?.reasoning ?? undefined,
+  ai_quote: record.ai_screening?.supporting_quote ?? undefined,
+  ai_quote_verified: record.ai_screening?.quote_verified ?? undefined,
   ai_error: record.ai_screening?.error ?? undefined,
   user_decision: record.final_decision ? DECISION_LABELS[record.final_decision] : null,
   extracted_data: record.extraction && !record.extraction.error ? record.extraction.values : undefined,
+  extraction_evidence: record.extraction && !record.extraction.error ? record.extraction.evidence : undefined,
   extraction_error: record.extraction?.error ?? undefined,
   rob_data: record.appraisal?.judgments ?? undefined,
   rob_error: record.appraisal?.error ?? undefined,

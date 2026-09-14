@@ -10,7 +10,7 @@ const judgmentColor = (value: string) => {
 };
 
 export function RiskOfBiasScreen() {
-  const { robTool, handleRobToolChange, handleRunRob, robLoading, robProgress, robComplete, literatureResults, aiProvider, goTo } = useWorkspace();
+  const { robTool, handleRobToolChange, handleRunRob, robLoading, robProgress, robComplete, literatureResults, aiModelName, goTo } = useWorkspace();
   const assessed = literatureResults.filter(p => p.rob_data);
   const domains = assessed[0]?.rob_data ? Object.keys(assessed[0].rob_data).filter(k => k !== 'Overall') : [];
 
@@ -32,7 +32,7 @@ export function RiskOfBiasScreen() {
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-end' }}>
           <button className="btn-primary" onClick={handleRunRob} disabled={robLoading} style={{ height: '42px', padding: '0 24px' }}>
-            {robLoading ? `Running ${aiProvider}...` : `Run AI Assessment`}
+            {robLoading ? `Running ${aiModelName}...` : `Run AI Assessment`}
           </button>
         </div>
       </div>

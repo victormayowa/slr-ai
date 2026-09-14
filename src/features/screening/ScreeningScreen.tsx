@@ -9,6 +9,19 @@ const DECISION_BUTTONS = [
   { decision: 'Exclude', label: '✕ Reject', color: '#ef4444', background: 'rgba(239,68,68,0.2)' },
 ] as const;
 
+// The AI's supporting quote, marked by whether it was actually found in the record's title and abstract.
+function QuoteCheck({ quote, verified }: { quote: string; verified?: boolean }) {
+  const color = verified ? '#10b981' : '#ef4444';
+  return (
+    <blockquote style={{ margin: '8px 0 0', paddingLeft: '8px', borderLeft: `3px solid ${color}` }}>
+      <span style={{ fontStyle: 'italic' }}>“{quote}”</span>
+      <div style={{ fontSize: '0.75rem', color }}>
+        {verified ? 'Quote found in this record' : 'Quote not found in this record: check it before relying on the suggestion'}
+      </div>
+    </blockquote>
+  );
+}
+
 export function ScreeningScreen() {
   const { handleRunAbstractScreening, abstractLoading, abstractProgress, literatureResults, handleUserDecision, goTo } = useWorkspace();
   return (
@@ -42,7 +55,10 @@ export function ScreeningScreen() {
                       {p.abstract || "Abstract not provided in standard search feed."}
                     </div>
                   </td>
-                  <td style={{ padding: '12px', color: 'var(--text-secondary)' }}>{p.ai_error ? `AI error: ${p.ai_error}` : p.ai_reasoning || "-"}</td>
+                  <td style={{ padding: '12px', color: 'var(--text-secondary)' }}>
+                    {p.ai_error ? `AI error: ${p.ai_error}` : p.ai_reasoning || "-"}
+                    {!p.ai_error && p.ai_quote && <QuoteCheck quote={p.ai_quote} verified={p.ai_quote_verified} />}
+                  </td>
                   <td style={{ padding: '12px', fontWeight: 'bold', color: p.ai_decision === 'Include' ? '#10b981' : p.ai_decision === 'Exclude' ? '#ef4444' : '#f59e0b' }}>
                     {p.ai_error ? "Error" : p.ai_decision || "Pending"}
                   </td>

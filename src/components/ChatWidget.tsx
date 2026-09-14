@@ -1,13 +1,11 @@
 import { useState } from 'react';
 import { errorMessage } from '../api/client';
-import { usePreferences } from '../app/preferences';
 import { useAuth } from '../auth/authContext';
 
 type ChatMessage = { role: 'user' | 'ai'; text: string };
 
 export function ChatWidget() {
   const { apiRequest } = useAuth();
-  const { aiProvider } = usePreferences();
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -23,7 +21,7 @@ export function ChatWidget() {
     setChatLoading(true);
 
     try {
-      const data = await apiRequest('POST', '/api/chat', { query, provider: aiProvider });
+      const data = await apiRequest('POST', '/api/chat', { query });
       setChatMessages(prev => [...prev, { role: 'ai', text: data.answer }]);
     } catch (err) {
       setChatMessages(prev => [...prev, { role: 'ai', text: errorMessage(err, 'Error connecting to FAQ service.') }]);

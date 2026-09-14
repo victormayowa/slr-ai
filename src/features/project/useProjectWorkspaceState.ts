@@ -1,11 +1,11 @@
 import Papa from 'papaparse';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { modelDisplayName, type AiModelInfo } from '../../api/ai';
 import { ApiError, errorMessage } from '../../api/client';
 import type { ProjectSummary } from '../../api/projects';
 import { toPaper, type ApiRecord, type CriterionInfo, type Paper, type PrismaCounts, type ProtocolSettings, type StrategyInfo, type WorkflowStageInfo } from '../../api/review';
 import { batchLimit } from '../../app/plan';
-import { usePreferences } from '../../app/preferences';
 import { useAuth } from '../../auth/authContext';
 import type { ProjectTab } from './tabs';
 import type { ProtocolItem, SearchItem } from './types';
@@ -24,10 +24,10 @@ const toSearchItems = (strategies: StrategyInfo[]): SearchItem[] =>
 // All state and actions for one project's workspace. The workspace remounts per project, so state never leaks between projects.
 export function useProjectWorkspaceState(projectId: number) {
   const { apiRequest } = useAuth();
-  const { aiProvider } = usePreferences();
   const navigate = useNavigate();
 
   const [currentProject, setCurrentProject] = useState<ProjectSummary | null>(null);
+  const [aiModels, setAiModels] = useState<AiModelInfo[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [projectName, setProjectName] = useState('');
 
@@ -78,8 +78,9 @@ export function useProjectWorkspaceState(projectId: number) {
       apiRequest('GET', `${base}/records`),
       apiRequest('GET', `${base}/prisma`),
       apiRequest('GET', `${base}/workflow`),
+      apiRequest('GET', '/api/ai/models'),
     ])
-      .then(([project, protocol, criteria, strategies, fields, synthesis, records, counts, stages]) => {
+      .then(([project, protocol, criteria, strategies, fields, synthesis, records, counts, stages, models]) => {
         if (cancelled) return;
         const papers = (records as ApiRecord[]).map(toPaper);
         const { inclusion, exclusion } = splitCriteria(criteria);
@@ -100,6 +101,7 @@ export function useProjectWorkspaceState(projectId: number) {
         setPrisma(counts);
         setRobComplete(papers.some(p => p.rob_data));
         setWorkflow(stages);
+        setAiModels(models);
       })
       .catch(err => {
         if (!cancelled) setLoadError(errorMessage(err, 'Could not load this project.'));
@@ -112,6 +114,7 @@ export function useProjectWorkspaceState(projectId: number) {
   const apiPost = (path: string, body: unknown) => apiRequest('POST', path, body);
   const projectPath = (suffix: string) => `/api/projects/${projectId}/${suffix}`;
   const goTo = (tab: ProjectTab) => navigate(`/projects/${projectId}/${tab}`);
+  const aiModelName = currentProject?.ai_model ? modelDisplayName(currentProject.ai_model) : 'AI';
 
   const applyProtocol = (protocol: ProtocolSettings) => {
     setReviewType(protocol.review_type);
@@ -186,6 +189,14 @@ export function useProjectWorkspaceState(projectId: number) {
     setCurrentProject(updated);
   };
 
+  const handleAiModelChange = async (modelId: number) => {
+    try {
+      setCurrentProject(await apiRequest('PUT', `/api/projects/${projectId}/ai-model`, { ai_model_id: modelId }));
+    } catch (err) {
+      alert(errorMessage(err, 'Could not change the AI model.'));
+    }
+  };
+
   const saveProtocol = async (overrides: Partial<ProtocolSettings> = {}) => {
     const saved: ProtocolSettings = await apiRequest('PUT', projectPath('protocol'), {
       review_type: reviewType,
@@ -206,7 +217,7 @@ export function useProjectWorkspaceState(projectId: number) {
     let failedRecords = 0;
     for (let i = 0; i < ids.length; i += batchSize) {
       try {
-        const updated: ApiRecord[] = await apiPost(projectPath(endpoint), { record_ids: ids.slice(i, i + batchSize), provider: aiProvider });
+        const updated: ApiRecord[] = await apiPost(projectPath(endpoint), { record_ids: ids.slice(i, i + batchSize) });
         failedRecords += updated.filter(failed).length;
         mergeRecords(updated);
       } catch (err) {
@@ -244,7 +255,7 @@ export function useProjectWorkspaceState(projectId: number) {
     try {
       await saveTitle();
       await saveProtocol();
-      const data = await apiPost(projectPath('protocol/generate'), { provider: aiProvider });
+      const data = await apiPost(projectPath('protocol/generate'), {});
       applyCriteria(data.criteria);
       setSearchItems(toSearchItems(data.search_strategies));
       setExtractionColumns(data.extraction_fields);
@@ -446,7 +457,7 @@ export function useProjectWorkspaceState(projectId: number) {
     setMetaLoading(true);
     setMetaReport(null);
     try {
-      const report = await apiPost(projectPath('synthesis'), { provider: aiProvider });
+      const report = await apiPost(projectPath('synthesis'), {});
       setMetaReport(report.content);
       await loadWorkflow();
     } catch (err) {
@@ -460,7 +471,9 @@ export function useProjectWorkspaceState(projectId: number) {
     projectId,
     currentProject,
     loadError,
-    aiProvider,
+    aiModels,
+    aiModelName,
+    handleAiModelChange,
     goTo,
     projectName,
     setProjectName,

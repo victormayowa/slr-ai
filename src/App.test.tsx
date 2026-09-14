@@ -3,11 +3,16 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { PreferencesProvider } from './app/PreferencesProvider';
 import { AuthProvider } from './auth/AuthProvider';
 
 const LOGIN = { access_token: 'token-123', token_type: 'bearer', user: { id: 1, email: 'lead@omnireview.test', name: 'Liam Lead' } };
-const PROJECT = { id: 7, title: 'Aspirin review', description: null, role: 'lead_reviewer', member_count: 3, organization: null };
+const model = (id: number, provider: string, providerLabel: string, modelId: string, label: string, available: boolean) => ({
+  id, provider, provider_label: providerLabel, model_id: modelId, label, is_default: id === 4, enabled: true,
+  data_location: `${providerLabel}, somewhere`, available,
+});
+const GEMINI = model(4, 'gemini', 'Google Gemini', 'gemini-3.8-flash', 'Gemini 3.8 Flash', true);
+const MISTRAL = model(17, 'mistral', 'Mistral AI', 'mistral-large-latest', 'Mistral Large (latest)', false);
+const PROJECT = { id: 7, title: 'Aspirin review', description: null, role: 'lead_reviewer', member_count: 3, organization: null, ai_model: GEMINI };
 
 const stage = (name: string, label: string, status: string) => ({
   stage: name, label, status, requirements: [], completed_at: null, completed_by: null, completion_note: null,
@@ -31,6 +36,7 @@ const WORKSPACE_API = {
     stage('search', 'Search and deduplication', 'completed'),
     stage('screening', 'Title and abstract screening', 'open'),
   ],
+  'GET /api/ai/models': [GEMINI, MISTRAL],
 };
 
 // Answers fetch calls from a table keyed by "METHOD /path"; unexpected requests get a 500.
@@ -47,11 +53,9 @@ function mockApi(routes: Record<string, unknown>) {
 function renderApp(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <PreferencesProvider>
-        <AuthProvider>
-          <App />
-        </AuthProvider>
-      </PreferencesProvider>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
     </MemoryRouter>,
   );
 }
@@ -99,6 +103,20 @@ describe('App routing', () => {
     expect(await screen.findByRole('heading', { name: '5. Abstract Screening' })).toBeTruthy();
     expect(screen.getByText('Low-dose aspirin trial')).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Title and abstract screening sign-off' })).toBeTruthy();
+  });
+
+  it('pins the project to another AI model and says when it needs an API key', async () => {
+    const fetchMock = mockApi({ 'POST /api/auth/login': LOGIN, ...WORKSPACE_API, 'PUT /api/projects/7/ai-model': { ...PROJECT, ai_model: MISTRAL } });
+    renderApp('/projects/7/setup');
+
+    signIn();
+    const picker = await screen.findByLabelText('AI Model');
+    expect((picker as HTMLSelectElement).value).toBe('4');
+    fireEvent.change(picker, { target: { value: '17' } });
+
+    expect(await screen.findByText(/No Mistral AI API key is available to you/)).toBeTruthy();
+    const pinCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
+    expect(pinCall?.[1]?.body).toBe(JSON.stringify({ ai_model_id: 17 }));
   });
 
   it('explains when a project cannot be opened', async () => {

@@ -1,5 +1,51 @@
+import { Link } from 'react-router-dom';
+import { modelDisplayName } from '../../api/ai';
+import { canEditProject } from '../../api/projects';
 import { WorkspaceStageGate } from '../project/WorkspaceStageGate';
 import { useWorkspace } from '../project/workspaceContext';
+
+function AiModelPicker() {
+  const { currentProject, aiModels, handleAiModelChange } = useWorkspace();
+  const pinned = currentProject?.ai_model ?? null;
+  const offered = pinned === null || aiModels.some(model => model.id === pinned.id);
+  const options = offered || pinned === null ? aiModels : [pinned, ...aiModels];
+  const selected = aiModels.find(model => model.id === pinned?.id);
+  const providerLabels = [...new Set(options.map(model => model.provider_label))];
+  const canChange = currentProject !== null && canEditProject(currentProject.role);
+
+  return (
+    <div>
+      <label htmlFor="project-ai-model" style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>AI Model</label>
+      <select id="project-ai-model" className="search-input" value={pinned?.id ?? ''} disabled={!canChange} onChange={e => handleAiModelChange(Number(e.target.value))}>
+        {pinned === null && <option value="">Choose a model</option>}
+        {providerLabels.map(providerLabel => (
+          <optgroup key={providerLabel} label={providerLabel}>
+            {options.filter(model => model.provider_label === providerLabel).map(model => (
+              <option key={model.id} value={model.id}>
+                {model.label}{model.available === false ? ' (needs an API key)' : ''}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '8px' }}>
+        Every AI step in this project uses this model, and each AI result records the model that produced it.
+        {!canChange && ' Only the project owner or lead reviewer can change it.'}
+        {selected?.data_location && ` Review content is sent to ${selected.data_location}.`}
+      </p>
+      {!offered && (
+        <p role="alert" style={{ fontSize: '0.85rem', color: '#ef4444' }}>
+          {modelDisplayName(pinned)} is no longer offered. Choose another model before running AI steps.
+        </p>
+      )}
+      {selected?.available === false && (
+        <p role="alert" style={{ fontSize: '0.85rem', color: '#f59e0b' }}>
+          No {selected.provider_label} API key is available to you. <Link to="/settings">Add your own key in Settings</Link> or choose another model.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function SetupScreen() {
   const {
@@ -34,6 +80,7 @@ export function SetupScreen() {
             <option>SPIDER</option>
           </select>
         </div>
+        <AiModelPicker />
         <div>
           <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>Description of Study</label>
           <textarea className="search-input" style={{ height: '80px', resize: 'vertical' }} placeholder="Provide a brief overview of your research objectives..." value={studyDescription} onChange={e => setStudyDescription(e.target.value)} />

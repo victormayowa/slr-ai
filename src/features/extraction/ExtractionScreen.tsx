@@ -20,7 +20,8 @@ export function ExtractionScreen() {
 
       {extracted.length > 0 && (
         <>
-          <div style={{ overflowX: 'auto', background: 'rgba(0,0,0,0.3)', borderRadius: '12px', marginTop: '24px' }}>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '24px' }}>Hover over a value to see the passage the AI took it from. "Unverified" means that passage couldn't be found in the record.</p>
+          <div style={{ overflowX: 'auto', background: 'rgba(0,0,0,0.3)', borderRadius: '12px', marginTop: '12px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
               <thead style={{ background: '#1e293b' }}>
                 <tr>
@@ -32,11 +33,15 @@ export function ExtractionScreen() {
                 {extracted.slice(0, 10).map(p => (
                   <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                     <td style={{ padding: '12px', fontWeight: 'bold' }}>{p.title}</td>
-                    {extractionColumns.map(col => (
-                      <td key={col} style={{ padding: '12px', color: 'var(--text-secondary)' }}>
-                        {p.extracted_data?.[col] || 'Not Reported'}
-                      </td>
-                    ))}
+                    {extractionColumns.map(col => {
+                      const evidence = p.extraction_evidence?.[col];
+                      return (
+                        <td key={col} style={{ padding: '12px', color: 'var(--text-secondary)' }} title={evidence?.quote ? `Source: “${evidence.quote}”` : undefined}>
+                          {p.extracted_data?.[col] || 'Not Reported'}
+                          {evidence?.verified === false && <span style={{ display: 'block', color: '#ef4444', fontSize: '0.75rem' }}>Unverified</span>}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
