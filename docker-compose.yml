@@ -43,6 +43,8 @@ services:
       CORS_ORIGINS: http://localhost:5173
       # Development-only fallback so a fresh clone starts; set JWT_SECRET_KEY in your shell to override.
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-insecure-secret-do-not-use-in-production-0123}
+      # Development-only key for encrypting users' saved API keys (32 bytes, base64); override the same way.
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:-ZGV2LW9ubHktaW5zZWN1cmUtZW5jcnlwdGlvbi1rZXk=}
     volumes:
       - ./backend:/app
       - /app/.venv

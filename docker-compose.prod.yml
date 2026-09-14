@@ -1,6 +1,6 @@
 # Production on a single VPS:
 #   SITE_ADDRESS=app.example.com POSTGRES_PASSWORD=... docker compose -f docker-compose.prod.yml up -d --build
-# backend/.env must hold production secrets (JWT_SECRET_KEY, provider keys, SENTRY_DSN).
+# backend/.env must hold production secrets (JWT_SECRET_KEY, DATA_ENCRYPTION_KEY, provider keys, SENTRY_DSN).
 name: omnireview
 
 services:

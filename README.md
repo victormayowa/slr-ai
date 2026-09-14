@@ -2,13 +2,13 @@
 
 An AI-assisted platform for systematic reviews and meta-analyses, built around human decisions: the AI suggests, reviewers decide, and every number should trace back to recorded data.
 
-> **Status:** early prototype. The workflow screens run end to end, but full-text retrieval, statistical meta-analysis, persistence of review data, and collaboration are not built yet. See [docs/roadmap.md](docs/roadmap.md) for the full build plan.
+> **Status:** early prototype. Review data, workflow sign-offs, and the audit trail are stored in PostgreSQL, but full-text retrieval, statistical meta-analysis, background jobs, and email invitations are not built yet. See [docs/roadmap.md](docs/roadmap.md) for the full build plan.
 
 ## Stack
 
 - **Frontend:** React 19, TypeScript, Vite (`src/`)
 - **Backend:** FastAPI, SQLAlchemy, Python 3.12, managed with [uv](https://docs.astral.sh/uv/) (`backend/`)
-- **AI providers:** Google Gemini, OpenAI, Anthropic (configured by API key)
+- **AI providers:** Anthropic, Google Gemini, OpenAI, Alibaba Qwen, Moonshot Kimi, DeepSeek, Zhipu GLM, Mistral. Each project pins a model from the catalog; server keys and users' own encrypted keys are both supported
 - **Literature sources:** PubMed (E-utilities), OpenAlex
 - **Infrastructure:** PostgreSQL, Redis, Caddy, Docker Compose
 
@@ -21,7 +21,7 @@ docker compose up --build
 - App: http://localhost:5173
 - API docs: http://localhost:8000/docs
 
-To enable AI features, copy `backend/.env.example` to `backend/.env` and add at least one provider key. The development compose file supplies a throwaway `JWT_SECRET_KEY`; never use it in production.
+To enable AI features, copy `backend/.env.example` to `backend/.env` and add at least one provider key, or sign in and add your own key under Settings. The development compose file supplies throwaway `JWT_SECRET_KEY` and `DATA_ENCRYPTION_KEY` values; never use them in production.
 
 ## Demo accounts
 
@@ -48,7 +48,7 @@ What each role may do is defined in [`backend/permissions.py`](backend/permissio
 
 ```bash
 cd backend
-cp .env.example .env    # then set JWT_SECRET_KEY and provider keys
+cp .env.example .env    # then set JWT_SECRET_KEY, DATA_ENCRYPTION_KEY, and any server provider keys
 ./scripts/setup_local_services.sh  # one time: pgvector, Redis, database role, dev and test databases
 uv sync
 uv run alembic upgrade head        # create or update the database schema
@@ -93,7 +93,7 @@ SITE_ADDRESS=app.example.com POSTGRES_PASSWORD=change-me \
   docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-`backend/.env` must contain production secrets: a random `JWT_SECRET_KEY`, provider API keys, and optionally `SENTRY_DSN`.
+`backend/.env` must contain production secrets: a random `JWT_SECRET_KEY`, a random `DATA_ENCRYPTION_KEY` (it encrypts users' saved API keys, so changing or losing it makes those keys unreadable), any server provider API keys, and optionally `SENTRY_DSN`.
 
 ## Configuration
 
