@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Papa from 'papaparse';
 import { API_BASE, ApiError, errorDetail, errorMessage } from './api/client';
 import { PROJECT_ROLE_LABELS, canManageMembers, type ProjectMemberInfo, type ProjectSummary } from './api/projects';
@@ -111,31 +111,28 @@ function App() {
     setCurrentProject(null);
   };
 
-  const apiRequest = async (method: string, path: string, body?: unknown) => {
+  // `token` defaults to the stored one; pass it explicitly right after login, before state has updated.
+  const apiRequest = async (method: string, path: string, body?: unknown, token = authToken) => {
     const res = await fetch(`${API_BASE}${path}`, {
       method,
-      headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body)
     });
     const data = res.status === 204 ? null : await res.json().catch(() => ({}));
-    if (res.status === 401 && authToken) signOut();
+    if (res.status === 401 && token) signOut();
     if (!res.ok) throw new ApiError(errorDetail(data, res.status));
     return data;
   };
 
   const apiPost = (path: string, body: unknown) => apiRequest('POST', path, body);
 
-  const loadProjects = async () => {
+  const loadProjects = async (token = authToken) => {
     try {
-      setProjects(await apiRequest('GET', '/api/projects'));
+      setProjects(await apiRequest('GET', '/api/projects', undefined, token));
     } catch (err) {
       alert(errorMessage(err, 'Could not load your projects.'));
     }
   };
-
-  useEffect(() => {
-    if (authToken) loadProjects();
-  }, [authToken]);
 
   const openProject = (project: ProjectSummary) => {
     setCurrentProject(project);
@@ -550,6 +547,7 @@ function App() {
       setAuthToken(data.access_token);
       setCurrentUser(data.user.name);
       setCurrentView('dashboard');
+      loadProjects(data.access_token);
     } catch (err) {
       setAuthError(errorMessage(err, 'Network error'));
     }
