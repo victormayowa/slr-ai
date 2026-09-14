@@ -20,6 +20,8 @@ import models
 from database import SessionLocal
 from permissions import ProjectRole
 from project_defaults import apply_project_defaults
+from review_data import find_duplicates
+from workflow import WorkflowError, complete_stage, require_stage_open
 
 DEMO_PASSWORD = "Review-Dev-2026!"
 DEMO_ORGANIZATION = "Demo University"
@@ -137,9 +139,9 @@ DEMO_CRITERIA = [
     ("inclusion", "Randomized controlled trials", "accepted"),
     ("inclusion", "Adults aged 18 or older without established cardiovascular disease", "accepted"),
     ("inclusion", "Daily aspirin of 325 mg or less compared with placebo or no treatment", "accepted"),
-    ("inclusion", "Reports major adverse cardiovascular events", "pending"),
+    ("inclusion", "Reports major adverse cardiovascular events", "accepted"),
     ("exclusion", "Participants with prior myocardial infarction or stroke", "accepted"),
-    ("exclusion", "Observational or non-randomized designs", "pending"),
+    ("exclusion", "Observational or non-randomized designs", "rejected"),
 ]
 
 DEMO_STRATEGIES = [
@@ -289,6 +291,34 @@ def _seed_demo_review(db: Session, project: models.Project, users: dict[str, mod
             db.add(run)
 
 
+def _advance_demo_workflow(db: Session, project: models.Project, lead: models.User) -> None:
+    """Sign off the demo protocol and search (after deduplicating) so the demo opens at screening.
+
+    Stages that are already signed off, or not yet reachable, are left as they are.
+    """
+    db.flush()
+    for stage, note in (
+        ("protocol", "Demo protocol approved for local testing."),
+        ("search", "Demo records imported and deduplicated for local testing."),
+    ):
+        try:
+            require_stage_open(db, project.id, stage)
+        except WorkflowError:
+            continue
+        if stage == "search":
+            records = db.scalars(select(models.Record).where(models.Record.project_id == project.id)).all()
+            duplicates = find_duplicates(records)
+            for record in records:
+                if record.id in duplicates:
+                    record.duplicate_of_id = duplicates[record.id]
+            db.flush()
+        try:
+            complete_stage(db, project, stage, lead, note)
+        except WorkflowError as exc:
+            print(f"Left the demo {stage} stage open: {exc}", file=sys.stderr)
+            return
+
+
 def seed(db: Session) -> None:
     password_hash = bcrypt.hashpw(DEMO_PASSWORD.encode(), bcrypt.gensalt()).decode()
     users = {spec.email: _upsert_user(db, spec, password_hash) for spec in DEMO_USERS}
@@ -305,6 +335,7 @@ def seed(db: Session) -> None:
         _set_organization_role(organization, user, "owner" if user is owner else "member")
 
     _seed_demo_review(db, project, users)
+    _advance_demo_workflow(db, project, users["lead@omnireview.test"])
 
     outsider = users["outsider@omnireview.test"]
     private_project = _get_or_create_project(db, OUTSIDER_PROJECT, outsider, None, None)

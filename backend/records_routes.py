@@ -1,7 +1,6 @@
 """Database searches, file imports, the record list, deduplication, and PRISMA counts."""
 
 import asyncio
-import re
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
@@ -15,13 +14,14 @@ from database import get_db
 from permissions import Permission
 from projects_routes import ProjectAccess, get_in_project, project_access
 from rate_limiting import ai_rate_limit
+from review_data import TITLE_ABSTRACT, final_decision, find_duplicates, latest_run
 from services.errors import SearchError
 from services.openalex import search_openalex
 from services.pubmed import search_pubmed
+from workflow import require_stage_open
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["records"])
 
-TITLE_ABSTRACT = models.TITLE_ABSTRACT
 MAX_IMPORT_RECORDS = 5000
 
 
@@ -57,24 +57,14 @@ def with_record_details(query: Select) -> Select:
     )
 
 
-def final_decision(record: models.Record) -> str | None:
-    """The most recent reviewer decision at title/abstract screening. AI suggestions never count."""
-    decisions = [d for d in record.decisions if d.stage == TITLE_ABSTRACT]
-    return max(decisions, key=lambda d: d.id).decision if decisions else None
-
-
-def _latest_run(record: models.Record, task: str) -> models.AIRun | None:
-    return next((run for run in reversed(record.ai_runs) if run.task == task), None)
-
-
 def _run_meta(run: models.AIRun) -> dict:
     return {"provider": run.provider, "model": run.model, "error": run.error, "created_at": run.created_at}
 
 
 def record_out(record: models.Record, user_id: int) -> dict:
-    screening = _latest_run(record, "screening")
-    extraction = _latest_run(record, "extraction")
-    appraisal = _latest_run(record, "appraisal")
+    screening = latest_run(record, "screening")
+    extraction = latest_run(record, "extraction")
+    appraisal = latest_run(record, "appraisal")
     my_decision = next(
         (d.decision for d in record.decisions if d.stage == TITLE_ABSTRACT and d.reviewer_id == user_id), None
     )
@@ -120,20 +110,13 @@ def run_out(run: models.SearchRun) -> dict:
     }
 
 
-def dedup_key(record: models.Record) -> str:
-    """Same DOI, or with no DOI the same normalized title, counts as a duplicate."""
-    doi = record.doi.strip().lower()
-    if doi:
-        return doi
-    return "title:" + re.sub(r"[^a-z0-9]+", " ", record.title.lower()).strip()
-
-
 @router.post("/searches", status_code=status.HTTP_201_CREATED, dependencies=[Depends(ai_rate_limit)])
 async def run_search(
     body: SearchRunRequest,
     access: ProjectAccess = Depends(project_access(Permission.RUN_SEARCH)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "search")
     strategy = get_in_project(db, models.SearchStrategy, body.strategy_id, access.project.id, "Search strategy")
     try:
         if strategy.database.strip().lower() == "pubmed":
@@ -195,6 +178,7 @@ def import_records(
     access: ProjectAccess = Depends(project_access(Permission.RUN_SEARCH)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "search")
     run = models.SearchRun(
         project_id=access.project.id,
         kind="import",
@@ -235,6 +219,7 @@ def list_records(
 def clear_records(
     access: ProjectAccess = Depends(project_access(Permission.EDIT_PROJECT)), db: Session = Depends(get_db)
 ):
+    require_stage_open(db, access.project.id, "search")
     record_count = db.scalar(
         select(func.count()).select_from(models.Record).where(models.Record.project_id == access.project.id)
     )
@@ -257,20 +242,13 @@ def clear_records(
 def deduplicate_records(
     access: ProjectAccess = Depends(project_access(Permission.RUN_SEARCH)), db: Session = Depends(get_db)
 ):
-    kept: dict[str, int] = {}
-    marked: list[int] = []
-    unique_records = db.scalars(
-        select(models.Record)
-        .where(models.Record.project_id == access.project.id, models.Record.duplicate_of_id.is_(None))
-        .order_by(models.Record.id)
-    )
-    for record in unique_records:
-        key = dedup_key(record)
-        if key in kept:
-            record.duplicate_of_id = kept[key]
-            marked.append(record.id)
-        else:
-            kept[key] = record.id
+    require_stage_open(db, access.project.id, "search")
+    records = db.scalars(select(models.Record).where(models.Record.project_id == access.project.id)).all()
+    duplicates = find_duplicates(records)
+    for record in records:
+        if record.id in duplicates:
+            record.duplicate_of_id = duplicates[record.id]
+    marked = sorted(duplicates)
 
     if marked:
         record_event(

@@ -54,6 +54,27 @@ def test_demo_accounts_support_orcid_and_institutional_login(client, login):
     ]
 
 
+def test_demo_project_opens_at_screening_with_the_duplicate_set_aside(client, login):
+    run_seed()
+    lead = login("lead@omnireview.test", seed_dev.DEMO_PASSWORD)
+    project_id = next(
+        p["id"] for p in client.get("/api/projects", headers=lead).json() if p["title"] == seed_dev.DEMO_PROJECT
+    )
+
+    stages = client.get(f"/api/projects/{project_id}/workflow", headers=lead).json()
+    prisma = client.get(f"/api/projects/{project_id}/prisma", headers=lead).json()
+
+    assert [s["status"] for s in stages] == [
+        "completed",
+        "completed",
+        "open",
+        "not_started",
+        "not_started",
+        "not_started",
+    ]
+    assert (prisma["duplicates_removed"], prisma["screened"], prisma["included"], prisma["excluded"]) == (1, 7, 2, 1)
+
+
 def test_seed_refuses_to_run_in_production(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
 

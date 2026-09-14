@@ -309,3 +309,42 @@ class AuditEvent(Base):
     hash: Mapped[str] = mapped_column(String(64))
 
     actor: Mapped[User | None] = relationship()
+
+
+class ProjectStage(Base):
+    """Sign-off state of one workflow stage. No row means the stage has never been completed."""
+
+    __tablename__ = "project_stages"
+    __table_args__ = (UniqueConstraint("project_id", "stage", name="uq_project_stage"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    # A workflow.STAGES value.
+    stage: Mapped[str] = mapped_column(String(20))
+    completed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completion_note: Mapped[str | None] = mapped_column(Text)
+    reopened_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reopen_rationale: Mapped[str | None] = mapped_column(Text)
+
+    completed_by: Mapped[User | None] = relationship(foreign_keys=[completed_by_id])
+
+
+class StageSnapshot(Base):
+    """Hashed record of a stage's content at sign-off. Protocol snapshots are the protocol's versions."""
+
+    __tablename__ = "stage_snapshots"
+    __table_args__ = (UniqueConstraint("project_id", "stage", "version", name="uq_stage_snapshot_version"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    version: Mapped[int] = mapped_column(Integer)
+    content: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    sha256: Mapped[str] = mapped_column(String(64))
+    note: Mapped[str] = mapped_column(Text)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    created_by: Mapped[User | None] = relationship()

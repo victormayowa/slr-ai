@@ -22,6 +22,22 @@ export type PrismaCounts = {
   awaiting_decision: number;
 };
 
+export type WorkflowRequirement = { label: string; met: boolean };
+
+export type WorkflowStageInfo = {
+  stage: string;
+  label: string;
+  status: 'open' | 'completed' | 'not_started';
+  requirements: WorkflowRequirement[];
+  completed_at: string | null;
+  completed_by: string | null;
+  completion_note: string | null;
+  reopen_rationale: string | null;
+  latest_version: number | null;
+  latest_snapshot_id: number | null;
+  can_manage: boolean;
+};
+
 type Decision = 'include' | 'exclude' | 'undecided';
 
 type AiRunInfo = { provider: string; model: string; error: string | null; created_at: string };

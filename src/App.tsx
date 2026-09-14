@@ -3,7 +3,8 @@ import Papa from 'papaparse';
 import { API_BASE, ApiError, errorDetail, errorMessage } from './api/client';
 import { PROJECT_ROLE_LABELS, canManageMembers, type ProjectMemberInfo, type ProjectSummary } from './api/projects';
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from './dev/demoAccounts';
-import { toPaper, type ApiRecord, type CriterionInfo, type Paper, type PrismaCounts, type ProtocolSettings, type StrategyInfo } from './api/review';
+import { toPaper, type ApiRecord, type CriterionInfo, type Paper, type PrismaCounts, type ProtocolSettings, type StrategyInfo, type WorkflowStageInfo } from './api/review';
+import { StageGate } from './features/workflow/StageGate';
 import './index.css';
 
 type ProtocolItem = { id: string; text: string; status: 'pending' | 'accepted' | 'rejected' };
@@ -75,6 +76,8 @@ function App() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [currentProject, setCurrentProject] = useState<ProjectSummary | null>(null);
   const [projectMembers, setProjectMembers] = useState<ProjectMemberInfo[]>([]);
+  const [workflow, setWorkflow] = useState<WorkflowStageInfo[]>([]);
+  const [workflowBusy, setWorkflowBusy] = useState(false);
   
   const [loginIdentifier, setLoginIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -152,11 +155,51 @@ function App() {
     setLiteratureResults(papers);
     setPrisma(counts);
     setRobComplete(papers.some(p => p.rob_data));
+    await loadWorkflow(projectId);
   };
 
   const mergeRecords = (updated: ApiRecord[]) => {
     const byId = new Map(updated.map(record => [String(record.id), toPaper(record)]));
     setLiteratureResults(prev => prev.map(p => byId.get(p.id) ?? p));
+  };
+
+  const loadWorkflow = async (projectId = currentProject?.id) => {
+    if (!projectId) return;
+    setWorkflow(await apiRequest('GET', `/api/projects/${projectId}/workflow`));
+  };
+
+  const stageInfo = (stage: string) => workflow.find(item => item.stage === stage);
+
+  const handleCompleteStage = async (stage: WorkflowStageInfo) => {
+    const note = window.prompt(`Sign off "${stage.label}". Note for the audit trail (what you checked):`);
+    if (note === null) return;
+    if (note.trim().length < 3) {
+      alert('Please write a short sign-off note (at least 3 characters).');
+      return;
+    }
+    setWorkflowBusy(true);
+    try {
+      setWorkflow(await apiPost(projectPath(`workflow/${stage.stage}/complete`), { note: note.trim() }));
+    } catch (err) {
+      alert(errorMessage(err, 'Could not sign off this stage.'));
+    }
+    setWorkflowBusy(false);
+  };
+
+  const handleReopenStage = async (stage: WorkflowStageInfo) => {
+    const rationale = window.prompt(`Reopen "${stage.label}"? Every later stage reopens too. Explain why (at least 10 characters):`);
+    if (rationale === null) return;
+    if (rationale.trim().length < 10) {
+      alert('Please explain why the stage is being reopened (at least 10 characters).');
+      return;
+    }
+    setWorkflowBusy(true);
+    try {
+      setWorkflow(await apiPost(projectPath(`workflow/${stage.stage}/reopen`), { rationale: rationale.trim() }));
+    } catch (err) {
+      alert(errorMessage(err, 'Could not reopen this stage.'));
+    }
+    setWorkflowBusy(false);
   };
 
   const openProject = async (project: ProjectSummary) => {
@@ -169,6 +212,7 @@ function App() {
     setPrisma(null);
     setMetaReport(null);
     setRobComplete(false);
+    setWorkflow([]);
     setCurrentView('project');
     setActiveTab('setup');
 
@@ -210,6 +254,7 @@ function App() {
       ...overrides,
     });
     applyProtocol(saved);
+    await loadWorkflow();
   };
 
   // Sends records to an AI endpoint in batches, merging each batch's stored results as it returns.
@@ -227,6 +272,7 @@ function App() {
       }
       onProgress(Math.round((Math.min(i + batchSize, ids.length) / ids.length) * 100));
     }
+    await loadWorkflow();
     return { failedBatches, failedRecords };
   };
 
@@ -288,6 +334,7 @@ function App() {
       applyCriteria(data.criteria);
       applyStrategies(data.search_strategies);
       setExtractionColumns(data.extraction_fields);
+      await loadWorkflow();
       setActiveTab('protocol');
     } catch (err) {
       console.error(err);
@@ -302,6 +349,7 @@ function App() {
       const update = (items: ProtocolItem[]) => items.map(item => item.id === id ? { ...item, status: updated.status } : item);
       setInclusionItems(update);
       setExclusionItems(update);
+      await loadWorkflow();
     } catch (err) {
       alert(errorMessage(err, 'Could not update the criterion.'));
     }
@@ -310,6 +358,7 @@ function App() {
   const handleAcceptAll = async (kind: 'inclusion' | 'exclusion') => {
     try {
       applyCriteria(await apiPost(projectPath('criteria/accept-all'), { kind }));
+      await loadWorkflow();
     } catch (err) {
       alert(errorMessage(err, 'Could not accept the criteria.'));
     }
@@ -424,6 +473,7 @@ function App() {
       const updated: ApiRecord = await apiRequest('PUT', projectPath(`records/${id}/decision`), { decision: decision.toLowerCase() });
       mergeRecords([updated]);
       setPrisma(await apiRequest('GET', projectPath('prisma')));
+      await loadWorkflow();
     } catch (err) {
       alert(errorMessage(err, 'Could not save your decision.'));
     }
@@ -442,6 +492,7 @@ function App() {
   const saveExtractionColumns = async (names: string[]) => {
     try {
       setExtractionColumns(await apiRequest('PUT', projectPath('extraction-fields'), { names }));
+      await loadWorkflow();
     } catch (err) {
       alert(errorMessage(err, 'Could not save the extraction fields.'));
     }
@@ -514,6 +565,7 @@ function App() {
     try {
       const report = await apiPost(projectPath('synthesis'), { provider: aiProvider });
       setMetaReport(report.content);
+      await loadWorkflow();
     } catch (err) {
       console.error(err);
       setMetaReport(`**Error**: ${errorMessage(err, 'Failed to generate the synthesis.')}`);
@@ -847,6 +899,7 @@ function App() {
         {activeTab === 'setup' && (
           <section className="glass-panel animate-fade-in" style={{ padding: '40px', maxWidth: '800px', margin: '0 auto' }}>
             <h2 style={{ marginBottom: '24px', color: 'var(--text-primary)' }}>Initialize Review Project</h2>
+            <StageGate stage={stageInfo('protocol')} busy={workflowBusy} onComplete={handleCompleteStage} onReopen={handleReopenStage} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div>
                 <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>Project Title</label>
@@ -894,6 +947,7 @@ function App() {
         {activeTab === 'protocol' && (
           <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
             <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>2. AI Protocol Builder</h3>
+            <StageGate stage={stageInfo('protocol')} busy={workflowBusy} onComplete={handleCompleteStage} onReopen={handleReopenStage} />
             <div style={{ display: 'flex', gap: '24px', marginBottom: '24px' }}>
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -934,6 +988,7 @@ function App() {
         {activeTab === 'search' && (
           <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
             <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>3. Database Search & Manual Import</h3>
+            <StageGate stage={stageInfo('search')} busy={workflowBusy} onComplete={handleCompleteStage} onReopen={handleReopenStage} />
             
             <div style={{ marginBottom: '32px' }}>
               <h4 style={{ color: 'var(--accent-primary)', marginBottom: '16px' }}>AI-Generated Database Search Strings</h4>
@@ -1010,6 +1065,7 @@ function App() {
         {activeTab === 'dedup' && (
           <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
             <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>4. Deduplication</h3>
+            <StageGate stage={stageInfo('search')} busy={workflowBusy} onComplete={handleCompleteStage} onReopen={handleReopenStage} />
             <button className="btn-primary" onClick={handleRunDedup} disabled={dedupLoading} style={{ marginTop: '24px', padding: '16px 32px' }}>
               {dedupLoading ? 'Analyzing IDs...' : 'Run Automated Deduplication'}
             </button>
@@ -1025,6 +1081,7 @@ function App() {
         {activeTab === 'abstract' && (
           <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
             <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>5. Abstract Screening</h3>
+            <StageGate stage={stageInfo('screening')} busy={workflowBusy} onComplete={handleCompleteStage} onReopen={handleReopenStage} />
             
             <button className="btn-primary" onClick={handleRunAbstractScreening} disabled={abstractLoading} style={{ marginBottom: '24px', background: 'linear-gradient(135deg, #10b981, #059669)', padding: '12px 24px' }}>
               {abstractLoading ? 'AI Screening Abstracts...' : `Run Batch AI Abstract Screening (${getBatchLimit('abstract')} / page)`}
@@ -1085,6 +1142,7 @@ function App() {
         {activeTab === 'extraction_rules' && (
           <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
             <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>6. Define Full-Text Extraction Rules</h3>
+            <StageGate stage={stageInfo('protocol')} busy={workflowBusy} onComplete={handleCompleteStage} onReopen={handleReopenStage} />
             <p style={{ color: 'var(--text-secondary)', marginBottom: '24px' }}>Remove any variables you do not need, and add standard or custom ones.</p>
             
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '24px' }}>
@@ -1118,6 +1176,7 @@ function App() {
         {activeTab === 'fulltext' && (
           <section className="glass-panel animate-fade-in" style={{ padding: '32px', border: '1px solid var(--accent-primary)' }}>
             <h3 style={{ marginBottom: '16px', color: 'var(--accent-primary)' }}>7. Full-Text Screening & Batch Extraction</h3>
+            <StageGate stage={stageInfo('extraction')} busy={workflowBusy} onComplete={handleCompleteStage} onReopen={handleReopenStage} />
             <p style={{ color: 'var(--text-secondary)' }}>Full-text PDF retrieval is not available yet. Extraction currently reads only the title and abstract of each paper you accepted, so verify every value against the full article.</p>
             <button className="btn-primary" onClick={handleRunFullTextPipeline} disabled={fullTextLoading} style={{ marginTop: '24px', background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)', padding: '16px 32px', marginBottom: '24px' }}>
               {fullTextLoading ? 'Extracting from abstracts...' : `Run AI Extraction on Accepted Papers (up to ${getBatchLimit('fulltext')})`}
@@ -1185,6 +1244,7 @@ function App() {
         {activeTab === 'rob' && (
           <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
             <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>9. Quality Assessment & Risk of Bias</h3>
+            <StageGate stage={stageInfo('appraisal')} busy={workflowBusy} onComplete={handleCompleteStage} onReopen={handleReopenStage} />
             <div style={{ display: 'flex', gap: '16px', marginBottom: '32px' }}>
               <div style={{ flex: 1 }}>
                 <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>Select Assessment Rubric</label>
@@ -1265,6 +1325,7 @@ function App() {
         {activeTab === 'meta' && (
           <section className="glass-panel animate-fade-in" style={{ padding: '32px', border: '1px solid var(--accent-primary)' }}>
             <h3 style={{ marginBottom: '16px', color: 'var(--accent-primary)' }}>10. AI Narrative Synthesis</h3>
+            <StageGate stage={stageInfo('synthesis')} busy={workflowBusy} onComplete={handleCompleteStage} onReopen={handleReopenStage} />
             <p style={{ color: 'var(--text-secondary)', marginBottom: '16px' }}>An AI-written summary of the extracted data and risk of bias for the papers you accepted. No statistical meta-analysis is run: there are no pooled estimates or heterogeneity statistics.</p>
             <button className="btn-primary" onClick={handleRunMetaAnalysis} disabled={metaLoading} style={{ background: 'linear-gradient(135deg, #10b981, #059669)', padding: '16px 32px' }}>
               {metaLoading ? `Synthesizing with ${aiProvider}...` : 'Synthesize Outcomes & Generate Report'}

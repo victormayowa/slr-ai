@@ -1,8 +1,9 @@
 import logging
 import os
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -21,6 +22,8 @@ from security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 from services.ai_screening import answer_faq
 from services.errors import LLMError
 from services.llm import Provider
+from workflow import WorkflowError
+from workflow_routes import router as workflow_router
 
 configure_logging()
 configure_sentry()
@@ -67,6 +70,13 @@ app.include_router(review_router)
 app.include_router(records_router)
 app.include_router(screening_router)
 app.include_router(audit_router)
+app.include_router(workflow_router)
+
+
+@app.exception_handler(WorkflowError)
+async def workflow_error_handler(request: Request, exc: WorkflowError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+
 
 # Routes that aren't tied to a project. Every route here requires a valid login token.
 api = APIRouter(prefix="/api", dependencies=[Depends(get_current_user), Depends(ai_rate_limit)])

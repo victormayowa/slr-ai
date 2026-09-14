@@ -33,6 +33,7 @@ class Permission(StrEnum):
     EDIT_MANUSCRIPT = "manuscript:edit"
     VIEW_AUDIT = "audit:view"
     EXPORT = "export:run"
+    MANAGE_WORKFLOW = "workflow:manage"
 
 
 _P = Permission
@@ -55,6 +56,7 @@ ROLE_PERMISSIONS: dict[ProjectRole, frozenset[Permission]] = {
             _P.EDIT_MANUSCRIPT,
             _P.VIEW_AUDIT,
             _P.EXPORT,
+            _P.MANAGE_WORKFLOW,
         }
     ),
     ProjectRole.STATISTICIAN: frozenset(

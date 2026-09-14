@@ -18,6 +18,7 @@ from services.ai_protocol import generate_protocol_elements
 from services.ai_screening import ROB_TOOL_DOMAINS
 from services.errors import LLMError
 from services.llm import Provider, model_for
+from workflow import require_stage_open
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["protocol"])
 
@@ -122,6 +123,7 @@ def update_protocol(
     access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "protocol")
     if body.rob_tool not in ROB_TOOL_DOMAINS:
         raise HTTPException(status_code=422, detail=f"Unsupported risk of bias tool: {body.rob_tool}")
     protocol = access.project.protocol
@@ -151,6 +153,7 @@ async def generate_protocol(
     access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "protocol")
     project, protocol = access.project, access.project.protocol
     if protocol is None or not protocol.description.strip():
         raise HTTPException(status_code=400, detail="Describe the study in Project Setup before generating a protocol")
@@ -236,6 +239,7 @@ def update_criterion(
     access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "protocol")
     criterion = get_in_project(db, models.Criterion, criterion_id, access.project.id, "Criterion")
     updates = body.model_dump(exclude_none=True)
     for name, value in updates.items():
@@ -260,6 +264,7 @@ def accept_all_criteria(
     access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "protocol")
     pending = [c for c in _project_criteria(db, access.project.id) if c.kind == body.kind and c.status == "pending"]
     for criterion in pending:
         criterion.status = "accepted"
@@ -290,6 +295,7 @@ def update_search_strategy(
     access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "protocol")
     strategy = get_in_project(db, models.SearchStrategy, strategy_id, access.project.id, "Search strategy")
     if strategy.query != body.query:
         record_event(
@@ -317,6 +323,7 @@ def replace_extraction_fields(
     access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "protocol")
     project = access.project
     names = _clean_field_names(body.names)
     before = [field.name for field in project.extraction_fields]

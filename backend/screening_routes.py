@@ -20,7 +20,8 @@ from database import get_db
 from permissions import Permission
 from projects_routes import ProjectAccess, get_in_project, project_access
 from rate_limiting import ai_rate_limit
-from records_routes import TITLE_ABSTRACT, final_decision, record_out, with_record_details
+from records_routes import record_out, with_record_details
+from review_data import TITLE_ABSTRACT, final_decision
 from services.ai_screening import (
     APPRAISAL_PROMPT_VERSION,
     EXTRACTION_PROMPT_VERSION,
@@ -33,6 +34,7 @@ from services.ai_screening import (
 )
 from services.errors import LLMError
 from services.llm import Provider, model_for
+from workflow import require_stage_open
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +143,7 @@ async def suggest_screening_decisions(
     access: ProjectAccess = Depends(project_access(Permission.SCREEN)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "screening")
     accepted = db.scalars(
         select(models.Criterion)
         .where(models.Criterion.project_id == access.project.id, models.Criterion.status == "accepted")
@@ -178,6 +181,7 @@ def set_screening_decision(
     access: ProjectAccess = Depends(project_access(Permission.SCREEN)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "screening")
     record = get_in_project(db, models.Record, record_id, access.project.id, "Record")
     if record.duplicate_of_id is not None:
         raise HTTPException(status_code=409, detail="This record is marked as a duplicate")
@@ -213,6 +217,7 @@ async def suggest_extraction(
     access: ProjectAccess = Depends(project_access(Permission.EXTRACT)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "extraction")
     fields = list(access.project.extraction_fields)
     if not fields:
         raise HTTPException(status_code=400, detail="Add at least one extraction field first")
@@ -242,6 +247,7 @@ async def suggest_appraisal(
     access: ProjectAccess = Depends(project_access(Permission.APPRAISE)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "appraisal")
     if access.project.protocol is None:
         raise HTTPException(status_code=404, detail="This project has no protocol")
     tool = access.project.protocol.rob_tool
@@ -274,6 +280,7 @@ async def create_synthesis(
     access: ProjectAccess = Depends(project_access(Permission.RUN_ANALYSIS)),
     db: Session = Depends(get_db),
 ):
+    require_stage_open(db, access.project.id, "synthesis")
     records = db.scalars(
         with_record_details(
             select(models.Record).where(

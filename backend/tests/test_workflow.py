@@ -1,5 +1,21 @@
 import pytest
 from sqlalchemy import select
+from workflow_helpers import (
+    GENERATED_PROTOCOL,
+    PROTOCOL,
+    RECORDS,
+    add_member,
+    complete_stage,
+    create_project,
+    decide,
+    generate_protocol,
+    import_records,
+    lock_protocol,
+    open_extraction,
+    open_screening,
+    open_synthesis,
+    url,
+)
 
 import models
 import records_routes
@@ -7,64 +23,10 @@ from database import SessionLocal
 from project_defaults import DEFAULT_EXTRACTION_FIELDS
 from services.errors import SearchError
 
-PROTOCOL = {
-    "review_type": "Systematic Review",
-    "framework": "PICO",
-    "description": "Does aspirin prevent heart attacks in adults?",
-    "suggested_criteria": "Adults; randomized trials",
-    "extraction_outline": "Country\nFollow-up",
-    "rob_tool": "ROB-2",
-}
-GENERATED_PROTOCOL = (
-    '{"inclusion_criteria": ["Adults", "Randomized trials"], "exclusion_criteria": ["Children"],'
-    ' "boolean_searches": [{"database": "PubMed", "string": "aspirin[tiab]"},'
-    ' {"database": "Embase", "string": "aspirin"}]}'
-)
-RECORDS = [
-    {"title": "Aspirin trial", "doi": "10.1/a", "abstract": "Adults randomized to aspirin."},
-    {"title": "Statin trial", "abstract": "Adults randomized to statins."},
-]
-
-
-def url(project_id, suffix=""):
-    return f"/api/projects/{project_id}/{suffix}"
-
 
 @pytest.fixture
 def project(client, auth_headers):
-    created = client.post("/api/projects", json={"title": "Aspirin review"}, headers=auth_headers)
-    return created.json()["id"], auth_headers
-
-
-def add_member(client, project_id, owner_headers, make_user, role):
-    email, headers = make_user()
-    response = client.post(url(project_id, "members"), json={"email": email, "role": role}, headers=owner_headers)
-    assert response.status_code == 201
-    return headers
-
-
-def import_records(client, project_id, headers, records=RECORDS, file_name="export.csv"):
-    response = client.post(
-        url(project_id, "imports"), json={"file_name": file_name, "records": records}, headers=headers
-    )
-    assert response.status_code == 201, response.text
-    return client.get(url(project_id, "records"), headers=headers).json()
-
-
-def generate_protocol(client, project_id, headers, fake_provider):
-    assert client.put(url(project_id, "protocol"), json=PROTOCOL, headers=headers).status_code == 200
-    fake_provider(GENERATED_PROTOCOL)
-    response = client.post(url(project_id, "protocol/generate"), json={"provider": "gemini"}, headers=headers)
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
-def decide(client, project_id, headers, record_id, decision):
-    response = client.put(
-        url(project_id, f"records/{record_id}/decision"), json={"decision": decision}, headers=headers
-    )
-    assert response.status_code == 200, response.text
-    return response.json()
+    return create_project(client, auth_headers), auth_headers
 
 
 def audit_actions(client, project_id, headers):
@@ -198,7 +160,7 @@ def test_extraction_fields_can_be_replaced(client, project):
 
 def test_search_run_stores_records_with_an_honest_source_label(client, project, fake_provider, monkeypatch):
     project_id, headers = project
-    embase = generate_protocol(client, project_id, headers, fake_provider)["search_strategies"][1]
+    embase = lock_protocol(client, project_id, headers, fake_provider)["search_strategies"][1]
     result = {
         "id": "W1",
         "title": "Aspirin",
@@ -222,21 +184,21 @@ def test_search_run_stores_records_with_an_honest_source_label(client, project, 
 
 def test_failed_search_stores_nothing(client, project, fake_provider, monkeypatch):
     project_id, headers = project
-    pubmed = generate_protocol(client, project_id, headers, fake_provider)["search_strategies"][0]
+    pubmed = lock_protocol(client, project_id, headers, fake_provider)["search_strategies"][0]
 
     def unavailable(query, limit):
         raise SearchError("PubMed search failed. Please try again shortly.")
 
     monkeypatch.setattr(records_routes, "search_pubmed", unavailable)
 
-    assert (
-        client.post(url(project_id, "searches"), json={"strategy_id": pubmed["id"]}, headers=headers).status_code == 502
-    )
+    response = client.post(url(project_id, "searches"), json={"strategy_id": pubmed["id"]}, headers=headers)
+    assert response.status_code == 502
     assert client.get(url(project_id, "records"), headers=headers).json() == []
 
 
-def test_deduplication_and_prisma_counts_come_from_stored_data(client, project):
+def test_deduplication_and_prisma_counts_come_from_stored_data(client, project, fake_provider):
     project_id, headers = project
+    lock_protocol(client, project_id, headers, fake_provider)
     import_records(client, project_id, headers)
     duplicates = [{"title": "Different title", "doi": "10.1/A"}, {"title": "Statin trial!"}]
     import_records(client, project_id, headers, duplicates, file_name="second.csv")
@@ -257,8 +219,9 @@ def test_deduplication_and_prisma_counts_come_from_stored_data(client, project):
     }
 
 
-def test_clearing_records_needs_edit_permission(client, project, make_user):
+def test_clearing_records_needs_edit_permission(client, project, make_user, fake_provider):
     project_id, owner = project
+    lock_protocol(client, project_id, owner, fake_provider)
     import_records(client, project_id, owner)
     screener = add_member(client, project_id, owner, make_user, "screener")
 
@@ -271,20 +234,20 @@ def test_clearing_records_needs_edit_permission(client, project, make_user):
 # Screening
 
 
-def test_ai_screening_needs_accepted_inclusion_criteria(client, project):
+def test_ai_screening_waits_for_search_to_be_signed_off(client, project, fake_provider):
     project_id, headers = project
+    lock_protocol(client, project_id, headers, fake_provider)
     records = import_records(client, project_id, headers)
 
     response = client.post(url(project_id, "screening/ai"), json={"record_ids": [records[0]["id"]]}, headers=headers)
 
-    assert response.status_code == 400
+    assert response.status_code == 409
+    assert "Search and deduplication" in response.json()["detail"]
 
 
 def test_ai_screening_suggests_but_never_decides(client, project, fake_provider):
     project_id, headers = project
-    generate_protocol(client, project_id, headers, fake_provider)
-    client.post(url(project_id, "criteria/accept-all"), json={"kind": "inclusion"}, headers=headers)
-    records = import_records(client, project_id, headers)
+    records = open_screening(client, project_id, headers, fake_provider)
     fake_provider('{"decision": "Include", "reasoning": "Adults in a trial", "supporting_quote": "randomized"}')
 
     body = {"record_ids": [r["id"] for r in records], "provider": "gemini"}
@@ -296,11 +259,9 @@ def test_ai_screening_suggests_but_never_decides(client, project, fake_provider)
 
 def test_unusable_ai_screening_output_is_stored_as_an_error(client, project, fake_provider):
     project_id, headers = project
-    generate_protocol(client, project_id, headers, fake_provider)
-    client.post(url(project_id, "criteria/accept-all"), json={"kind": "inclusion"}, headers=headers)
-    record_id = import_records(client, project_id, headers)[0]["id"]
-
+    record_id = open_screening(client, project_id, headers, fake_provider)[0]["id"]
     fake_provider('{"decision": "Probably", "reasoning": "unsure"}')
+
     body = {"record_ids": [record_id], "provider": "gemini"}
     screened = client.post(url(project_id, "screening/ai"), json=body, headers=headers).json()[0]
 
@@ -310,9 +271,9 @@ def test_unusable_ai_screening_output_is_stored_as_an_error(client, project, fak
     assert "valid decision" in stored["ai_screening"]["error"]
 
 
-def test_reviewer_decisions_drive_prisma_and_are_audited(client, project):
+def test_reviewer_decisions_drive_prisma_and_are_audited(client, project, fake_provider):
     project_id, headers = project
-    first, second = import_records(client, project_id, headers)
+    first, second = open_screening(client, project_id, headers, fake_provider)
 
     decide(client, project_id, headers, first["id"], "include")
     decide(client, project_id, headers, second["id"], "exclude")
@@ -326,12 +287,13 @@ def test_reviewer_decisions_drive_prisma_and_are_audited(client, project):
     assert events[0]["details"] == {"stage": "title_abstract", "decision": "include", "previous": "exclude"}
 
 
-def test_records_from_other_projects_cannot_be_decided(client, make_user):
+def test_records_from_other_projects_cannot_be_decided(client, make_user, fake_provider):
     _, alice = make_user()
     _, bob = make_user()
-    alice_project = client.post("/api/projects", json={"title": "A"}, headers=alice).json()["id"]
-    bob_project = client.post("/api/projects", json={"title": "B"}, headers=bob).json()["id"]
-    alice_record = import_records(client, alice_project, alice)[0]["id"]
+    alice_project = create_project(client, alice, "A")
+    bob_project = create_project(client, bob, "B")
+    alice_record = open_screening(client, alice_project, alice, fake_provider)[0]["id"]
+    open_screening(client, bob_project, bob, fake_provider)
 
     response = client.put(
         url(bob_project, f"records/{alice_record}/decision"), json={"decision": "exclude"}, headers=bob
@@ -340,10 +302,12 @@ def test_records_from_other_projects_cannot_be_decided(client, make_user):
     assert response.status_code == 404
 
 
-def test_duplicate_records_cannot_be_decided(client, project):
+def test_duplicate_records_cannot_be_decided(client, project, fake_provider):
     project_id, headers = project
+    lock_protocol(client, project_id, headers, fake_provider)
     import_records(client, project_id, headers, [RECORDS[0], RECORDS[0]])
     client.post(url(project_id, "deduplicate"), headers=headers)
+    complete_stage(client, project_id, headers, "search")
     duplicate = client.get(url(project_id, "records?include_duplicates=true"), headers=headers).json()[1]
 
     response = client.put(
@@ -358,20 +322,23 @@ def test_duplicate_records_cannot_be_decided(client, project):
 
 def test_extraction_and_appraisal_run_only_on_included_records(client, project, fake_provider):
     project_id, headers = project
-    record_id = import_records(client, project_id, headers)[0]["id"]
-    body = {"record_ids": [record_id], "provider": "gemini"}
+    included, excluded = open_extraction(client, project_id, headers, fake_provider)
     fake_provider('{"Sample Size": 120}')
 
-    assert client.post(url(project_id, "extraction/ai"), json=body, headers=headers).status_code == 400
+    excluded_body = {"record_ids": [excluded["id"]], "provider": "gemini"}
+    assert client.post(url(project_id, "extraction/ai"), json=excluded_body, headers=headers).status_code == 400
 
-    decide(client, project_id, headers, record_id, "include")
+    body = {"record_ids": [included["id"]], "provider": "gemini"}
     extracted = client.post(url(project_id, "extraction/ai"), json=body, headers=headers).json()[0]
     assert extracted["extraction"]["values"] == {
         "Sample Size": "120",
         "Mean Age": "Missing from AI response",
         "Primary Outcome Result": "Missing from AI response",
         "Adverse Events": "Missing from AI response",
+        "Country": "Missing from AI response",
+        "Follow-up": "Missing from AI response",
     }
+    complete_stage(client, project_id, headers, "extraction")
 
     fake_provider('{"D1: Randomization": "Low"}')
     appraised = client.post(url(project_id, "appraisal/ai"), json=body, headers=headers).json()[0]
@@ -382,26 +349,26 @@ def test_extraction_and_appraisal_run_only_on_included_records(client, project, 
 
 def test_screeners_cannot_run_extraction(client, project, make_user):
     project_id, owner = project
-    record_id = import_records(client, project_id, owner)[0]["id"]
     screener = add_member(client, project_id, owner, make_user, "screener")
 
-    response = client.post(url(project_id, "extraction/ai"), json={"record_ids": [record_id]}, headers=screener)
+    response = client.post(url(project_id, "extraction/ai"), json={"record_ids": [1]}, headers=screener)
 
     assert response.status_code == 403
 
 
-def test_synthesis_needs_included_records(client, project, fake_provider):
+def test_synthesis_waits_for_risk_of_bias_sign_off(client, project, fake_provider):
     project_id, headers = project
-    import_records(client, project_id, headers)
+    open_extraction(client, project_id, headers, fake_provider)
     fake_provider("A narrative.")
 
-    assert client.post(url(project_id, "synthesis"), json={}, headers=headers).status_code == 400
+    response = client.post(url(project_id, "synthesis"), json={}, headers=headers)
+
+    assert response.status_code == 409
 
 
 def test_synthesis_is_saved_and_retrievable(client, project, fake_provider):
     project_id, headers = project
-    record_id = import_records(client, project_id, headers)[0]["id"]
-    decide(client, project_id, headers, record_id, "include")
+    open_synthesis(client, project_id, headers, fake_provider)
     fake_provider("## Narrative synthesis\nOne included trial.")
 
     created = client.post(url(project_id, "synthesis"), json={"provider": "gemini"}, headers=headers)
@@ -417,7 +384,7 @@ def test_synthesis_is_saved_and_retrievable(client, project, fake_provider):
 def test_audit_chain_is_valid_and_detects_tampering(client, project):
     project_id, headers = project
     client.put(url(project_id, "protocol"), json=PROTOCOL, headers=headers)
-    import_records(client, project_id, headers)
+    client.put(url(project_id, "extraction-fields"), json={"names": ["Country"]}, headers=headers)
     assert client.get(url(project_id, "audit"), headers=headers).json()["chain_valid"] is True
 
     with SessionLocal() as db:
