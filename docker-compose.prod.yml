@@ -28,7 +28,7 @@ services:
       - ./backend/.env
     environment:
       APP_ENV: production
-      DATABASE_URL: postgresql+psycopg2://omnireview:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/omnireview
+      DATABASE_URL: postgresql+psycopg://omnireview:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/omnireview
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: https://${SITE_ADDRESS}
     healthcheck:

@@ -1,13 +1,27 @@
-"""Environment is set before the app is imported, so tests never touch real data or call AI providers."""
+"""Tests run against a dedicated PostgreSQL database (TEST_DATABASE_URL) that is rebuilt from the migrations on every
+run. The environment is set before the app is imported, so tests never touch development data or call AI providers."""
 
 import os
-import tempfile
 from pathlib import Path
 
 import pytest
+from dotenv import load_dotenv
+from sqlalchemy.engine import make_url
 
-_test_db_dir = tempfile.mkdtemp(prefix="omnireview-tests-")
-os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", f"sqlite:///{_test_db_dir}/test.db")
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(BACKEND_DIR / ".env")
+
+_test_database_url = os.environ.get("TEST_DATABASE_URL", "")
+if not _test_database_url:
+    pytest.exit(
+        "TEST_DATABASE_URL is not set. Run backend/scripts/setup_local_services.sh (see README.md).", returncode=2
+    )
+if not (make_url(_test_database_url).database or "").endswith("_test"):
+    pytest.exit(
+        "TEST_DATABASE_URL must name a database ending in _test, because every test run erases it.", returncode=2
+    )
+
+os.environ["DATABASE_URL"] = _test_database_url
 os.environ["JWT_SECRET_KEY"] = "test-only-secret-key-with-plenty-of-length-0123456789"
 os.environ["CORS_ORIGINS"] = "http://localhost:5173"
 os.environ["APP_ENV"] = "test"
@@ -25,8 +39,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 import main  # noqa: E402
 import rate_limiting  # noqa: E402
 
-# Build the schema through the migrations, so every test run also checks that they apply cleanly.
-command.upgrade(Config(str(Path(__file__).resolve().parents[1] / "alembic.ini")), "head")
+# Start from an empty schema each run; this also checks that every migration downgrades and upgrades cleanly.
+_alembic_config = Config(str(BACKEND_DIR / "alembic.ini"))
+command.downgrade(_alembic_config, "base")
+command.upgrade(_alembic_config, "head")
 
 
 @pytest.fixture(autouse=True)

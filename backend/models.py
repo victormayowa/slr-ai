@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, true
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, true
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -275,7 +276,7 @@ class AppraisalSuggestion(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     ai_run_id: Mapped[int] = mapped_column(ForeignKey("ai_runs.id", ondelete="CASCADE"), unique=True)
     tool: Mapped[str] = mapped_column(String(30))
-    judgments: Mapped[dict[str, Any]] = mapped_column(JSON)
+    judgments: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
 
 class SynthesisReport(Base):
@@ -302,7 +303,7 @@ class AuditEvent(Base):
     action: Mapped[str] = mapped_column(String(60))
     entity_type: Mapped[str] = mapped_column(String(40))
     entity_id: Mapped[str | None] = mapped_column(String(40))
-    details: Mapped[dict[str, Any]] = mapped_column(JSON)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     prev_hash: Mapped[str] = mapped_column(String(64))
     hash: Mapped[str] = mapped_column(String(64))

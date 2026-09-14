@@ -38,7 +38,7 @@ services:
       - path: ./backend/.env
         required: false
     environment:
-      DATABASE_URL: postgresql+psycopg2://omnireview:omnireview-dev-password@postgres:5432/omnireview
+      DATABASE_URL: postgresql+psycopg://omnireview:omnireview-dev-password@postgres:5432/omnireview
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: http://localhost:5173
       # Development-only fallback so a fresh clone starts; set JWT_SECRET_KEY in your shell to override.

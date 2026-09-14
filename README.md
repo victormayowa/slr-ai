@@ -49,13 +49,14 @@ What each role may do is defined in [`backend/permissions.py`](backend/permissio
 ```bash
 cd backend
 cp .env.example .env    # then set JWT_SECRET_KEY and provider keys
+./scripts/setup_local_services.sh  # one time: pgvector, Redis, database role, dev and test databases
 uv sync
 uv run alembic upgrade head        # create or update the database schema
 uv run python -m scripts.seed_dev  # optional: demo accounts and projects
 uv run uvicorn main:app --reload
 ```
 
-Without `DATABASE_URL`, the API uses a local SQLite file (`backend/omnireview.db`).
+OmniReview requires PostgreSQL 16 with the pgvector extension in every environment; there is no SQLite fallback. The setup script expects PostgreSQL 16 to be installed already (`sudo apt install postgresql`) and asks for your sudo password.
 
 **Frontend**
 
@@ -72,7 +73,7 @@ The frontend calls `http://localhost:8000` unless `VITE_API_URL` is set.
 # Backend (from backend/)
 uv run ruff check . && uv run ruff format --check .
 uv run mypy .
-uv run pytest                 # add `-m live` to run tests that call PubMed and OpenAlex
+uv run pytest                 # erases and rebuilds TEST_DATABASE_URL; add `-m live` for PubMed/OpenAlex tests
 
 # Frontend (from the repository root)
 npm run lint
