@@ -1,0 +1,7 @@
+site_name: OmniReview AI Documentation
+theme: readthedocs
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - AI Screening: screening.md
+  - Meta-Analysis: meta-analysis.md
