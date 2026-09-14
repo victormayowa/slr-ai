@@ -32,7 +32,8 @@ services:
 
   api:
     build: ./backend
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    # Applies migrations and (re)creates the demo accounts from scripts/seed_dev.py on every start.
+    command: sh -c "alembic upgrade head && python -m scripts.seed_dev && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     env_file:
       - path: ./backend/.env
         required: false

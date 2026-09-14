@@ -14,6 +14,9 @@ from auth_routes import get_current_user
 from auth_routes import router as auth_router
 from database import engine
 from observability import RequestIdMiddleware, configure_logging, configure_sentry
+from projects_routes import router as projects_router
+from rate_limiting import rate_limit
+from security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 from services.ai_protocol import generate_protocol_elements
 from services.ai_screening import (
     ROB_TOOL_DOMAINS,
@@ -40,11 +43,13 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     expose_headers=["X-Request-ID"],
 )
-# Added last so it wraps everything, including CORS responses.
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(BodySizeLimitMiddleware)
+# Added last so it wraps everything, including rejected and CORS responses.
 app.add_middleware(RequestIdMiddleware)
 
 
@@ -65,9 +70,13 @@ def readyz():
 
 
 app.include_router(auth_router)
+app.include_router(projects_router)
 
 # Every route on this router requires a valid login token.
-api = APIRouter(prefix="/api", dependencies=[Depends(get_current_user)])
+api = APIRouter(
+    prefix="/api",
+    dependencies=[Depends(get_current_user), Depends(rate_limit("ai", limit=120, window_seconds=60))],
+)
 
 Provider = Literal["gemini", "openai", "anthropic"]
 Papers = list[dict[str, Any]]

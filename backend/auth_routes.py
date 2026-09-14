@@ -7,16 +7,15 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
-from database import engine, get_db
+from database import get_db
+from rate_limiting import rate_limit
 
 load_dotenv()
-
-models.Base.metadata.create_all(bind=engine)
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 if len(SECRET_KEY) < 32 or SECRET_KEY == "super_secret_omnireview_key":
@@ -27,7 +26,14 @@ if len(SECRET_KEY) < 32 or SECRET_KEY == "super_secret_omnireview_key":
 ALGORITHM = "HS256"
 TOKEN_LIFETIME = timedelta(hours=12)
 BCRYPT_MAX_PASSWORD_BYTES = 72
+# Lower only in tests; each step halves hashing time.
+BCRYPT_ROUNDS = int(os.getenv("BCRYPT_ROUNDS", "12"))
+LOGIN_RATE_LIMIT_PER_MINUTE = 20
+REGISTER_RATE_LIMIT_PER_HOUR = 20
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+
+# Checked when no account matches, so a failed login takes as long whether or not the account exists.
+_DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"not-a-real-password", bcrypt.gensalt(BCRYPT_ROUNDS))
 
 router = APIRouter(prefix="/api/auth")
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -78,13 +84,16 @@ def get_current_user(
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.PyJWTError:
         raise unauthorized from None
-    user = db.query(models.User).filter(models.User.email == payload.get("sub")).first()
-    if user is None:
+    user = db.scalar(select(models.User).where(models.User.email == payload.get("sub")))
+    if user is None or not user.is_active:
         raise unauthorized
     return user
 
 
-@router.post("/register")
+@router.post(
+    "/register",
+    dependencies=[Depends(rate_limit("register", limit=REGISTER_RATE_LIMIT_PER_HOUR, window_seconds=3600))],
+)
 def register_user(user: UserCreate, db: Session = Depends(get_db)):
     already_registered = HTTPException(status_code=400, detail="An account with this email or ORCID iD already exists")
 
@@ -93,10 +102,10 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
         identifier_matches.append(models.User.institutional_email == user.institutional_email)
     if user.orcid_id:
         identifier_matches.append(models.User.orcid_id == user.orcid_id)
-    if db.query(models.User).filter(or_(*identifier_matches)).first():
+    if db.scalar(select(models.User).where(or_(*identifier_matches))):
         raise already_registered
 
-    hashed_pw = bcrypt.hashpw(user.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    hashed_pw = bcrypt.hashpw(user.password.encode("utf-8"), bcrypt.gensalt(BCRYPT_ROUNDS)).decode("utf-8")
     new_user = models.User(
         first_name=user.first_name,
         last_name=user.last_name,
@@ -118,29 +127,48 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
     return {"message": "User created successfully"}
 
 
-@router.post("/login")
+@router.post(
+    "/login",
+    dependencies=[Depends(rate_limit("login", limit=LOGIN_RATE_LIMIT_PER_MINUTE, window_seconds=60))],
+)
 def login_user(user: UserLogin, db: Session = Depends(get_db)):
     invalid_credentials = HTTPException(status_code=401, detail="Invalid credentials")
     password = user.password.encode("utf-8")
     if len(password) > BCRYPT_MAX_PASSWORD_BYTES:
         raise invalid_credentials
 
-    db_user = (
-        db.query(models.User)
-        .filter(
-            (models.User.email == user.identifier)
-            | (models.User.institutional_email == user.identifier)
-            | (models.User.orcid_id == user.identifier)
+    db_user = db.scalar(
+        select(models.User).where(
+            or_(
+                models.User.email == user.identifier,
+                models.User.institutional_email == user.identifier,
+                models.User.orcid_id == user.identifier,
+            )
         )
-        .first()
     )
 
-    if not db_user or not bcrypt.checkpw(password, db_user.hashed_password.encode("utf-8")):
+    if db_user is None:
+        bcrypt.checkpw(password, _DUMMY_PASSWORD_HASH)
+        raise invalid_credentials
+    if not bcrypt.checkpw(password, db_user.hashed_password.encode("utf-8")) or not db_user.is_active:
         raise invalid_credentials
 
-    access_token = create_access_token(data={"sub": db_user.email, "name": f"{db_user.first_name} {db_user.last_name}"})
+    access_token = create_access_token(data={"sub": db_user.email, "name": db_user.full_name})
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": {"email": db_user.email, "name": f"{db_user.first_name} {db_user.last_name}"},
+        "user": {"id": db_user.id, "email": db_user.email, "name": db_user.full_name},
+    }
+
+
+@router.get("/me")
+def read_current_user(user: models.User = Depends(get_current_user)):
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.full_name,
+        "organizations": [
+            {"id": membership.organization.id, "name": membership.organization.name, "role": membership.role}
+            for membership in user.organization_memberships
+        ],
     }

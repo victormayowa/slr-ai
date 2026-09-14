@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -9,14 +10,28 @@ _test_db_dir = tempfile.mkdtemp(prefix="omnireview-tests-")
 os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", f"sqlite:///{_test_db_dir}/test.db")
 os.environ["JWT_SECRET_KEY"] = "test-only-secret-key-with-plenty-of-length-0123456789"
 os.environ["CORS_ORIGINS"] = "http://localhost:5173"
+os.environ["APP_ENV"] = "test"
 os.environ["SENTRY_DSN"] = ""
+os.environ["REDIS_URL"] = ""
+os.environ["BCRYPT_ROUNDS"] = "4"
 for provider_key in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
     os.environ[provider_key] = ""
 
+from alembic import command  # noqa: E402
+from alembic.config import Config  # noqa: E402
 from factories import PASSWORD, registration  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 import main  # noqa: E402
+import rate_limiting  # noqa: E402
+
+# Build the schema through the migrations, so every test run also checks that they apply cleanly.
+command.upgrade(Config(str(Path(__file__).resolve().parents[1] / "alembic.ini")), "head")
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limits():
+    rate_limiting.reset_rate_limits()
 
 
 @pytest.fixture
@@ -26,12 +41,33 @@ def client():
 
 
 @pytest.fixture
-def auth_headers(client):
-    user = registration()
-    assert client.post("/api/auth/register", json=user).status_code == 200
-    response = client.post("/api/auth/login", json={"identifier": user["email"], "password": PASSWORD})
-    assert response.status_code == 200
-    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+def login(client):
+    """Sign in and return auth headers."""
+
+    def sign_in(identifier: str, password: str = PASSWORD) -> dict[str, str]:
+        response = client.post("/api/auth/login", json={"identifier": identifier, "password": password})
+        assert response.status_code == 200, response.text
+        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    return sign_in
+
+
+@pytest.fixture
+def make_user(client, login):
+    """Register and sign in a new user; returns (email, auth headers)."""
+
+    def create(**overrides) -> tuple[str, dict[str, str]]:
+        user = registration(**overrides)
+        response = client.post("/api/auth/register", json=user)
+        assert response.status_code == 200, response.text
+        return user["email"], login(user["email"])
+
+    return create
+
+
+@pytest.fixture
+def auth_headers(make_user):
+    return make_user()[1]
 
 
 @pytest.fixture

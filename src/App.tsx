@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Papa from 'papaparse';
 import { API_BASE, ApiError, errorDetail, errorMessage } from './api/client';
+import { PROJECT_ROLE_LABELS, canManageMembers, type ProjectMemberInfo, type ProjectSummary } from './api/projects';
+import { DEMO_ACCOUNTS, DEMO_PASSWORD } from './dev/demoAccounts';
 import { dedupKey } from './lib/dedup';
 import './index.css';
 
@@ -82,6 +84,10 @@ function App() {
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [showShareModal, setShowShareModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState('viewer');
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [currentProject, setCurrentProject] = useState<ProjectSummary | null>(null);
+  const [projectMembers, setProjectMembers] = useState<ProjectMemberInfo[]>([]);
   
   const [loginIdentifier, setLoginIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -101,18 +107,64 @@ function App() {
   const signOut = () => {
     setAuthToken(null);
     setCurrentUser(null);
+    setProjects([]);
+    setCurrentProject(null);
   };
 
-  const apiPost = async (path: string, body: unknown) => {
+  const apiRequest = async (method: string, path: string, body?: unknown) => {
     const res = await fetch(`${API_BASE}${path}`, {
-      method: 'POST',
+      method,
       headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
-      body: JSON.stringify(body)
+      body: body === undefined ? undefined : JSON.stringify(body)
     });
-    const data = await res.json().catch(() => ({}));
+    const data = res.status === 204 ? null : await res.json().catch(() => ({}));
     if (res.status === 401 && authToken) signOut();
     if (!res.ok) throw new ApiError(errorDetail(data, res.status));
     return data;
+  };
+
+  const apiPost = (path: string, body: unknown) => apiRequest('POST', path, body);
+
+  const loadProjects = async () => {
+    try {
+      setProjects(await apiRequest('GET', '/api/projects'));
+    } catch (err) {
+      alert(errorMessage(err, 'Could not load your projects.'));
+    }
+  };
+
+  useEffect(() => {
+    if (authToken) loadProjects();
+  }, [authToken]);
+
+  const openProject = (project: ProjectSummary) => {
+    setCurrentProject(project);
+    setProjectName(project.title);
+    setCurrentView('project');
+    setActiveTab('setup');
+  };
+
+  const handleCreateProject = async () => {
+    const title = window.prompt('Name your new review project');
+    if (!title?.trim()) return;
+    try {
+      const project: ProjectSummary = await apiPost('/api/projects', { title: title.trim() });
+      await loadProjects();
+      openProject(project);
+    } catch (err) {
+      alert(errorMessage(err, 'Could not create the project.'));
+    }
+  };
+
+  const openShareModal = async (project: ProjectSummary) => {
+    setCurrentProject(project);
+    setProjectMembers([]);
+    setShowShareModal(true);
+    try {
+      setProjectMembers(await apiRequest('GET', `/api/projects/${project.id}/members`));
+    } catch (err) {
+      alert(errorMessage(err, 'Could not load project members.'));
+    }
   };
 
   // Only a reviewer's decision moves a paper forward; AI suggestions never do.
@@ -477,12 +529,16 @@ function App() {
     setChatLoading(false);
   };
 
-  const handleInvite = (e: React.FormEvent) => {
+  const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (inviteEmail) {
-      alert(`Invitation sent to ${inviteEmail}! They will receive an email shortly to join this project.`);
+    if (!currentProject || !inviteEmail.trim()) return;
+    try {
+      await apiPost(`/api/projects/${currentProject.id}/members`, { email: inviteEmail.trim(), role: inviteRole });
       setInviteEmail('');
-      setShowShareModal(false);
+      setProjectMembers(await apiRequest('GET', `/api/projects/${currentProject.id}/members`));
+      loadProjects();
+    } catch (err) {
+      alert(errorMessage(err, 'Could not add that member.'));
     }
   };
 
@@ -559,6 +615,12 @@ function App() {
           {authMode === 'login' && (
             <form onSubmit={handleLogin}>
               <h2 style={{ marginBottom: '24px', textAlign: 'center', fontSize: '1.5rem', fontWeight: 600 }}>Welcome Back</h2>
+              {import.meta.env.DEV && (
+                <select className="search-input" style={{ width: '100%', marginBottom: '16px' }} value="" onChange={e => { if (e.target.value) { setLoginIdentifier(e.target.value); setLoginPassword(DEMO_PASSWORD); } }}>
+                  <option value="">Development only: fill in a demo account…</option>
+                  {DEMO_ACCOUNTS.map(account => <option key={account.email} value={account.email}>{account.label}</option>)}
+                </select>
+              )}
               <input type="text" placeholder="Email, Inst. Email, or ORCID" required value={loginIdentifier} onChange={e => setLoginIdentifier(e.target.value)} className="search-input" style={{ width: '100%', marginBottom: '16px' }} />
               <input type="password" placeholder="Password" required value={loginPassword} onChange={e => setLoginPassword(e.target.value)} className="search-input" style={{ width: '100%', marginBottom: '24px' }} />
               <button type="submit" className="btn-primary" style={{ width: '100%', marginBottom: '16px', height: '44px', fontWeight: 600 }}>Sign In</button>
@@ -650,24 +712,31 @@ function App() {
         <div className="glass-panel" style={{ width: '100%', maxWidth: '800px', padding: '40px', border: '1px solid rgba(255,255,255,0.05)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
             <h2 style={{ margin: 0 }}>Your Active Projects</h2>
-            <button className="btn-primary" style={{ padding: '10px 20px', borderRadius: '8px' }} onClick={() => { setCurrentView('project'); setActiveTab('setup'); }}>+ New Project</button>
+            <button className="btn-primary" style={{ padding: '10px 20px', borderRadius: '8px' }} onClick={handleCreateProject}>+ New Project</button>
           </div>
-          <div style={{ background: 'linear-gradient(145deg, rgba(255,255,255,0.03), rgba(0,0,0,0.2))', padding: '24px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'transform 0.2s', cursor: 'pointer' }} onMouseOver={e => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-              <div style={{ width: '48px', height: '48px', background: 'rgba(59,130,246,0.1)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)', fontSize: '1.2rem' }}>📄</div>
-              <div>
-                <h3 style={{ margin: '0 0 6px 0', fontSize: '1.1rem' }}>AI in Healthcare Systematics</h3>
-                <div style={{ display: 'flex', gap: '12px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                  <span>Last edited 2 hours ago</span>
-                  <span>•</span>
-                  <span style={{ color: 'var(--accent-primary)' }}>Role: Owner</span>
+          {projects.length === 0 && (
+            <p style={{ color: 'var(--text-secondary)', margin: 0 }}>You aren't a member of any projects yet. Create one to get started.</p>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {projects.map(project => (
+              <div key={project.id} style={{ background: 'linear-gradient(145deg, rgba(255,255,255,0.03), rgba(0,0,0,0.2))', padding: '24px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '20px', minWidth: 0 }}>
+                  <div style={{ width: '48px', height: '48px', flexShrink: 0, background: 'rgba(59,130,246,0.1)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)', fontSize: '1.2rem' }}>📄</div>
+                  <div style={{ minWidth: 0 }}>
+                    <h3 style={{ margin: '0 0 6px 0', fontSize: '1.1rem' }}>{project.title}</h3>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                      {project.organization && <span>{project.organization.name}</span>}
+                      <span>{project.member_count} {project.member_count === 1 ? 'member' : 'members'}</span>
+                      <span style={{ color: 'var(--accent-primary)' }}>Your role: {PROJECT_ROLE_LABELS[project.role] ?? project.role}</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '12px', flexShrink: 0 }}>
+                  <button style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer' }} onClick={() => openShareModal(project)}>{canManageMembers(project.role) ? 'Share' : 'Members'}</button>
+                  <button className="btn-primary" style={{ padding: '8px 24px', borderRadius: '8px' }} onClick={() => openProject(project)}>Open</button>
                 </div>
               </div>
-            </div>
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', transition: 'all 0.2s' }} onClick={(e) => { e.stopPropagation(); setShowShareModal(true); }} onMouseOver={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'} onMouseOut={e => e.currentTarget.style.background = 'transparent'}>Share</button>
-              <button className="btn-primary" style={{ padding: '8px 24px', borderRadius: '8px' }} onClick={() => { setCurrentView('project'); setActiveTab('setup'); }}>Open</button>
-            </div>
+            ))}
           </div>
         </div>
       </div>
@@ -740,7 +809,7 @@ function App() {
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{userTier} Plan</div>
                 </div>
               </div>
-              <button style={{ width: '100%', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)', color: 'var(--accent-primary)', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => setShowShareModal(true)} onMouseOver={e => e.currentTarget.style.background = 'rgba(59,130,246,0.2)'} onMouseOut={e => e.currentTarget.style.background = 'rgba(59,130,246,0.1)'}>
+              <button style={{ width: '100%', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)', color: 'var(--accent-primary)', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => currentProject ? openShareModal(currentProject) : alert('Open a project from the dashboard to manage its members.')} onMouseOver={e => e.currentTarget.style.background = 'rgba(59,130,246,0.2)'} onMouseOut={e => e.currentTarget.style.background = 'rgba(59,130,246,0.1)'}>
                 👥 Share / Collaborate
               </button>
             </div>
@@ -1239,19 +1308,37 @@ function App() {
       {/* Share / Collaborate Modal */}
       {showShareModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
-          <div className="glass-panel" style={{ width: '400px', padding: '32px' }}>
-            <h3 style={{ marginBottom: '8px' }}>Invite Collaborator</h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '24px' }}>Invite a team member to collaborate on this review. They will receive an email invitation to join.</p>
-            <form onSubmit={handleInvite}>
-              <div style={{ marginBottom: '24px' }}>
-                <label style={{ display: 'block', fontSize: '0.9rem', marginBottom: '8px' }}>Collaborator Email Address</label>
-                <input type="email" required value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="colleague@university.edu" className="search-input" style={{ width: '100%' }} />
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '540px', padding: '32px' }}>
+            <h3 style={{ marginBottom: '16px' }}>{currentProject ? `Members of ${currentProject.title}` : 'Project members'}</h3>
+            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px 0', maxHeight: '240px', overflowY: 'auto' }}>
+              {projectMembers.map(member => (
+                <li key={member.user_id} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.9rem' }}>
+                  <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{member.name} <span style={{ color: 'var(--text-secondary)' }}>{member.email}</span></span>
+                  <span style={{ color: 'var(--accent-primary)', whiteSpace: 'nowrap' }}>{PROJECT_ROLE_LABELS[member.role] ?? member.role}</span>
+                </li>
+              ))}
+            </ul>
+            {currentProject && canManageMembers(currentProject.role) ? (
+              <form onSubmit={handleInvite}>
+                <label style={{ display: 'block', fontSize: '0.9rem', marginBottom: '8px' }}>Add someone who already has an OmniReview account</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '24px' }}>
+                  <input type="email" required value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="colleague@university.edu" className="search-input" style={{ flex: '1 1 220px' }} />
+                  <select className="search-input" value={inviteRole} onChange={e => setInviteRole(e.target.value)}>
+                    {Object.entries(PROJECT_ROLE_LABELS)
+                      .filter(([role]) => role !== 'owner' || currentProject.role === 'owner')
+                      .map(([role, label]) => <option key={role} value={role}>{label}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                  <button type="button" style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-secondary)', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: 500 }} onClick={() => setShowShareModal(false)}>Close</button>
+                  <button type="submit" className="btn-primary" style={{ padding: '10px 24px', borderRadius: '8px', fontWeight: 600 }}>Add Member</button>
+                </div>
+              </form>
+            ) : (
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn-primary" style={{ padding: '10px 24px', borderRadius: '8px' }} onClick={() => setShowShareModal(false)}>Close</button>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-                <button type="button" style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-secondary)', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', transition: 'all 0.2s', fontWeight: 500 }} onClick={() => setShowShareModal(false)} onMouseOver={e => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.border = '1px solid rgba(255,255,255,0.3)'; }} onMouseOut={e => { e.currentTarget.style.color = 'var(--text-secondary)'; e.currentTarget.style.border = '1px solid rgba(255,255,255,0.1)'; }}>Cancel</button>
-                <button type="submit" className="btn-primary" style={{ padding: '10px 24px', borderRadius: '8px', fontWeight: 600 }}>Send Invite</button>
-              </div>
-            </form>
+            )}
           </div>
         </div>
       )}

@@ -23,6 +23,25 @@ docker compose up --build
 
 To enable AI features, copy `backend/.env.example` to `backend/.env` and add at least one provider key. The development compose file supplies a throwaway `JWT_SECRET_KEY`; never use it in production.
 
+## Demo accounts
+
+For local testing, `uv run python -m scripts.seed_dev` (run automatically by `docker compose up`) creates a demo team on the project *Aspirin for primary prevention of cardiovascular events*. Every account uses the password `Review-Dev-2026!`, and development builds of the login page offer a picker that fills them in. The script refuses to run when `APP_ENV=production`.
+
+| Account | Project role |
+|---|---|
+| owner@omnireview.test | owner |
+| lead@omnireview.test | lead_reviewer |
+| methodologist@omnireview.test (or ORCID `0000-0002-1825-0097`) | methodologist |
+| statistician@omnireview.test | statistician |
+| clinician@omnireview.test (or `c.clinic@demo-university.test`) | clinical_expert |
+| screener1@omnireview.test, screener2@omnireview.test | screener |
+| extractor@omnireview.test | extractor |
+| auditor@omnireview.test | auditor |
+| viewer@omnireview.test | viewer |
+| outsider@omnireview.test | none (owns a separate private project) |
+
+What each role may do is defined in [`backend/permissions.py`](backend/permissions.py).
+
 ## Local development without Docker
 
 **Backend**
@@ -31,6 +50,8 @@ To enable AI features, copy `backend/.env.example` to `backend/.env` and add at 
 cd backend
 cp .env.example .env    # then set JWT_SECRET_KEY and provider keys
 uv sync
+uv run alembic upgrade head        # create or update the database schema
+uv run python -m scripts.seed_dev  # optional: demo accounts and projects
 uv run uvicorn main:app --reload
 ```
 
