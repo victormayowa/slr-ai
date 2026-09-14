@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+from typing import Literal
 
 import anthropic
 import openai
@@ -23,6 +24,15 @@ logger = logging.getLogger(__name__)
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+
+Provider = Literal["gemini", "openai", "anthropic"]
+
+
+def model_for(provider: str) -> str:
+    """The model name recorded as provenance for calls to `provider`."""
+    return {"gemini": GEMINI_MODEL, "openai": OPENAI_MODEL, "anthropic": ANTHROPIC_MODEL}.get(provider, "unknown")
+
+
 REQUEST_TIMEOUT_SECONDS = 60
 
 # Caps simultaneous provider calls from this process so large batches don't trip rate limits.

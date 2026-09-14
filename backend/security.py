@@ -3,7 +3,8 @@
 import json
 import os
 
-MAX_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(2 * 1024 * 1024)))
+# Large enough for a CSV import of a few thousand records with abstracts.
+MAX_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(10 * 1024 * 1024)))
 
 _API_SECURITY_HEADERS = [
     (b"x-content-type-options", b"nosniff"),

@@ -79,3 +79,7 @@ def rate_limit(scope: str, limit: int, window_seconds: int = 60) -> Callable[[Re
             )
 
     return dependency
+
+
+# Shared by every route that calls an AI provider or an external literature database.
+ai_rate_limit = rate_limit("ai", limit=120, window_seconds=60)

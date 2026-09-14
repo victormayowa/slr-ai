@@ -8,6 +8,12 @@ UNTRUSTED_TEXT_NOTE = (
 )
 MISSING_VALUE = "Missing from AI response"
 
+# Recorded with every AI run; change the matching version whenever a prompt below changes.
+SCREENING_PROMPT_VERSION = "screening-v1"
+EXTRACTION_PROMPT_VERSION = "extraction-v1"
+APPRAISAL_PROMPT_VERSION = "appraisal-v1"
+SYNTHESIS_PROMPT_VERSION = "synthesis-v1"
+
 ELIGIBILITY_DECISIONS = {"Include", "Exclude", "Maybe"}
 
 ROB_TOOL_DOMAINS = {

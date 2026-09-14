@@ -9,9 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import models
+from audit import record_event
 from auth_routes import get_current_user
-from database import get_db
+from database import Base, get_db
 from permissions import Permission, ProjectRole, has_permission
+from project_defaults import apply_project_defaults
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -69,6 +71,14 @@ def project_access(permission: Permission) -> Callable[..., ProjectAccess]:
         return ProjectAccess(user=user, project=membership.project, membership=membership)
 
     return dependency
+
+
+def get_in_project[ModelT: Base](db: Session, model: type[ModelT], row_id: int, project_id: int, label: str) -> ModelT:
+    """Fetch a project-scoped row by id, returning 404 if it doesn't exist or belongs to another project."""
+    row = db.get(model, row_id)
+    if row is None or getattr(row, "project_id", None) != project_id:
+        raise HTTPException(status_code=404, detail=f"{label} not found")
+    return row
 
 
 def _project_out(project: models.Project, role: str) -> dict:
@@ -134,7 +144,18 @@ def create_project(body: ProjectCreate, user: models.User = Depends(get_current_
         title=body.title, description=body.description, organization_id=body.organization_id, owner_id=user.id
     )
     project.members.append(models.ProjectMember(user_id=user.id, role=ProjectRole.OWNER))
+    apply_project_defaults(project)
     db.add(project)
+    db.flush()
+    record_event(
+        db,
+        project_id=project.id,
+        actor_id=user.id,
+        action="project.created",
+        entity_type="project",
+        entity_id=project.id,
+        details={"title": project.title},
+    )
     db.commit()
     db.refresh(project)
     return _project_out(project, ProjectRole.OWNER)
@@ -156,6 +177,16 @@ def update_project(
         raise HTTPException(status_code=422, detail="A project needs a title")
     for field, value in updates.items():
         setattr(access.project, field, value)
+    if updates:
+        record_event(
+            db,
+            project_id=access.project.id,
+            actor_id=access.user.id,
+            action="project.updated",
+            entity_type="project",
+            entity_id=access.project.id,
+            details={"changes": updates},
+        )
     db.commit()
     return _project_out(access.project, access.membership.role)
 
@@ -190,6 +221,16 @@ def add_member(
 
     member = models.ProjectMember(project_id=access.project.id, user_id=user.id, role=body.role)
     db.add(member)
+    db.flush()
+    record_event(
+        db,
+        project_id=access.project.id,
+        actor_id=access.user.id,
+        action="member.added",
+        entity_type="user",
+        entity_id=user.id,
+        details={"email": user.email, "role": body.role},
+    )
     db.commit()
     db.refresh(member)
     return _member_out(member)
@@ -207,7 +248,17 @@ def change_member_role(
         _require_owner(access)
     if member.role == ProjectRole.OWNER and body.role != ProjectRole.OWNER:
         _ensure_not_last_owner(access.project, member)
+    previous_role = member.role
     member.role = body.role
+    record_event(
+        db,
+        project_id=access.project.id,
+        actor_id=access.user.id,
+        action="member.role_changed",
+        entity_type="user",
+        entity_id=user_id,
+        details={"from": previous_role, "to": body.role},
+    )
     db.commit()
     return _member_out(member)
 
@@ -226,6 +277,15 @@ def remove_member(
         if not leaving_themselves:
             _require_owner(access)
         _ensure_not_last_owner(access.project, member)
+    record_event(
+        db,
+        project_id=access.project.id,
+        actor_id=access.user.id,
+        action="member.removed",
+        entity_type="user",
+        entity_id=user_id,
+        details={"role": member.role, "left_themselves": leaving_themselves},
+    )
     db.delete(member)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

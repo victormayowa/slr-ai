@@ -1,6 +1,9 @@
 from services.errors import LLMError
 from services.llm import generate_json
 
+# Recorded with every AI run; change it whenever the prompt below changes.
+PROMPT_VERSION = "protocol-v1"
+
 PROTOCOL_KEYS = ("inclusion_criteria", "exclusion_criteria", "boolean_searches")
 
 

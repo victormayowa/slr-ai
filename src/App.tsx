@@ -3,12 +3,11 @@ import Papa from 'papaparse';
 import { API_BASE, ApiError, errorDetail, errorMessage } from './api/client';
 import { PROJECT_ROLE_LABELS, canManageMembers, type ProjectMemberInfo, type ProjectSummary } from './api/projects';
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from './dev/demoAccounts';
-import { dedupKey } from './lib/dedup';
+import { toPaper, type ApiRecord, type CriterionInfo, type Paper, type PrismaCounts, type ProtocolSettings, type StrategyInfo } from './api/review';
 import './index.css';
 
 type ProtocolItem = { id: string; text: string; status: 'pending' | 'accepted' | 'rejected' };
 type SearchItem = { id: string; database: string; string: string; status: 'pending' | 'accepted' | 'rejected' };
-type Paper = { id: string; title: string; authors: string; year: string | number; source: string; doi: string; venue?: string; abstract?: string; ai_decision?: string; ai_reasoning?: string; ai_error?: string; user_decision?: 'Include' | 'Exclude' | 'Undecided' | null; extracted_data?: Record<string, string>; extraction_error?: string; rob_data?: Record<string, string>; rob_error?: string; };
 
 const ProgressBar = ({ progress, label }: { progress: number; label: string }) => (
   <div style={{ marginTop: '16px', width: '100%', maxWidth: '400px' }}>
@@ -34,19 +33,7 @@ function App() {
   const [suggestedCriteria, setSuggestedCriteria] = useState('');
   const [extractionOutline, setExtractionOutline] = useState('');
   
-  const [prisma, setPrisma] = useState({
-    sources: {} as Record<string, number>,
-    searched: 0,
-    uploaded: 0,
-    duplicates_removed: 0,
-    abstract_screened: 0,
-    abstract_excluded: 0,
-    fulltext_sought: 0,
-    fulltext_not_retrieved: 0,
-    fulltext_assessed: 0,
-    fulltext_excluded: 0,
-    final_included: 0
-  });
+  const [prisma, setPrisma] = useState<PrismaCounts | null>(null);
 
   const [aiProvider, setAiProvider] = useState('gemini');
   const [protocolLoading, setProtocolLoading] = useState(false);
@@ -134,11 +121,113 @@ function App() {
     }
   };
 
-  const openProject = (project: ProjectSummary) => {
+  const projectPath = (suffix: string) => `/api/projects/${currentProject?.id}/${suffix}`;
+
+  const applyProtocol = (protocol: ProtocolSettings) => {
+    setReviewType(protocol.review_type);
+    setFramework(protocol.framework);
+    setStudyDescription(protocol.description);
+    setSuggestedCriteria(protocol.suggested_criteria);
+    setExtractionOutline(protocol.extraction_outline);
+    setRobTool(protocol.rob_tool);
+  };
+
+  const applyCriteria = (criteria: CriterionInfo[]) => {
+    const toItem = (criterion: CriterionInfo): ProtocolItem => ({ id: String(criterion.id), text: criterion.text, status: criterion.status });
+    setInclusionItems(criteria.filter(c => c.kind === 'inclusion').map(toItem));
+    setExclusionItems(criteria.filter(c => c.kind === 'exclusion').map(toItem));
+  };
+
+  const applyStrategies = (strategies: StrategyInfo[]) => {
+    setSearchItems(strategies.map(s => ({ id: String(s.id), database: s.database, string: s.query, status: 'pending' })));
+  };
+
+  const refreshRecords = async (projectId = currentProject?.id) => {
+    if (!projectId) return;
+    const [records, counts] = await Promise.all([
+      apiRequest('GET', `/api/projects/${projectId}/records`),
+      apiRequest('GET', `/api/projects/${projectId}/prisma`),
+    ]);
+    const papers = (records as ApiRecord[]).map(toPaper);
+    setLiteratureResults(papers);
+    setPrisma(counts);
+    setRobComplete(papers.some(p => p.rob_data));
+  };
+
+  const mergeRecords = (updated: ApiRecord[]) => {
+    const byId = new Map(updated.map(record => [String(record.id), toPaper(record)]));
+    setLiteratureResults(prev => prev.map(p => byId.get(p.id) ?? p));
+  };
+
+  const openProject = async (project: ProjectSummary) => {
     setCurrentProject(project);
     setProjectName(project.title);
+    setInclusionItems([]);
+    setExclusionItems([]);
+    setSearchItems([]);
+    setLiteratureResults([]);
+    setPrisma(null);
+    setMetaReport(null);
+    setRobComplete(false);
     setCurrentView('project');
     setActiveTab('setup');
+
+    const base = `/api/projects/${project.id}`;
+    try {
+      const [protocol, criteria, strategies, fields, synthesis] = await Promise.all([
+        apiRequest('GET', `${base}/protocol`),
+        apiRequest('GET', `${base}/criteria`),
+        apiRequest('GET', `${base}/search-strategies`),
+        apiRequest('GET', `${base}/extraction-fields`),
+        apiRequest('GET', `${base}/synthesis`),
+      ]);
+      applyProtocol(protocol);
+      applyCriteria(criteria);
+      applyStrategies(strategies);
+      setExtractionColumns(fields);
+      setMetaReport(synthesis?.content ?? null);
+      await refreshRecords(project.id);
+    } catch (err) {
+      alert(errorMessage(err, 'Could not load this project.'));
+    }
+  };
+
+  const saveTitle = async () => {
+    if (!currentProject || !projectName.trim() || projectName.trim() === currentProject.title) return;
+    const updated: ProjectSummary = await apiRequest('PATCH', `/api/projects/${currentProject.id}`, { title: projectName.trim() });
+    setCurrentProject(updated);
+  };
+
+  const saveProtocol = async (overrides: Partial<ProtocolSettings> = {}) => {
+    if (!currentProject) return;
+    const saved: ProtocolSettings = await apiRequest('PUT', projectPath('protocol'), {
+      review_type: reviewType,
+      framework,
+      description: studyDescription,
+      suggested_criteria: suggestedCriteria,
+      extraction_outline: extractionOutline,
+      rob_tool: robTool,
+      ...overrides,
+    });
+    applyProtocol(saved);
+  };
+
+  // Sends records to an AI endpoint in batches, merging each batch's stored results as it returns.
+  const runAiBatches = async (endpoint: string, ids: number[], batchSize: number, onProgress: (percent: number) => void, failed: (record: ApiRecord) => boolean) => {
+    let failedBatches = 0;
+    let failedRecords = 0;
+    for (let i = 0; i < ids.length; i += batchSize) {
+      try {
+        const updated: ApiRecord[] = await apiPost(projectPath(endpoint), { record_ids: ids.slice(i, i + batchSize), provider: aiProvider });
+        failedRecords += updated.filter(failed).length;
+        mergeRecords(updated);
+      } catch (err) {
+        console.error(err);
+        failedBatches++;
+      }
+      onProgress(Math.round((Math.min(i + batchSize, ids.length) / ids.length) * 100));
+    }
+    return { failedBatches, failedRecords };
   };
 
   const handleCreateProject = async () => {
@@ -172,27 +261,33 @@ function App() {
     return userTier === 'PRO' ? 200 : userTier === 'PLUS' ? 100 : 50;
   };
 
+  const handleSaveSetup = async () => {
+    try {
+      await saveTitle();
+      await saveProtocol();
+      alert('Project setup saved.');
+    } catch (err) {
+      alert(errorMessage(err, 'Could not save the project setup.'));
+    }
+  };
+
   const handleGenerateProtocol = async () => {
-    if (!studyDescription) {
+    if (!currentProject) return;
+    if (!studyDescription.trim()) {
       alert("Please provide a Description of Study.");
       return;
     }
-    setProtocolLoading(true);
-    
-    if (extractionOutline) {
-      const outlineLines = extractionOutline.split('\n').filter(l => l.trim().length > 0);
-      if (outlineLines.length > 0) {
-         setExtractionColumns([...new Set([...extractionColumns, ...outlineLines])]);
-      }
-    }
+    const hasProtocol = inclusionItems.length > 0 || exclusionItems.length > 0 || searchItems.length > 0;
+    if (hasProtocol && !window.confirm('Regenerating replaces pending criteria and all search strings. Criteria you accepted or rejected are kept. Continue?')) return;
 
-    const masterPrompt = `Title: ${projectName}\nReview Type: ${reviewType}\nFramework: ${framework}\nDescription: ${studyDescription}\nSuggested Criteria: ${suggestedCriteria}`;
+    setProtocolLoading(true);
     try {
-      const data = await apiPost('/api/protocol/generate', { research_question: masterPrompt, provider: aiProvider });
-      
-      setInclusionItems(data.inclusion_criteria.map((c: string, i: number) => ({ id: `inc-${i}-${Date.now()}`, text: c, status: 'pending' })));
-      setExclusionItems(data.exclusion_criteria.map((c: string, i: number) => ({ id: `exc-${i}-${Date.now()}`, text: c, status: 'pending' })));
-      setSearchItems(data.boolean_searches.map((s: any, i: number) => ({ id: `search-${i}-${Date.now()}`, database: s.database, string: s.string, status: 'pending' })));
+      await saveTitle();
+      await saveProtocol();
+      const data = await apiPost(projectPath('protocol/generate'), { provider: aiProvider });
+      applyCriteria(data.criteria);
+      applyStrategies(data.search_strategies);
+      setExtractionColumns(data.extraction_fields);
       setActiveTab('protocol');
     } catch (err) {
       console.error(err);
@@ -201,38 +296,48 @@ function App() {
     setProtocolLoading(false);
   };
 
-  const handleItemStatus = (setter: any, items: any[], id: string, status: 'accepted' | 'rejected') => {
-    setter(items.map(item => item.id === id ? { ...item, status } : item));
-  };
-
-  const handleAcceptAll = (setter: any, items: any[]) => {
-    setter(items.map(item => ({ ...item, status: 'accepted' })));
-  };
-
-  const handleRunDatabaseSearch = async (database: string) => {
-    setSearchDBLoading(database);
-    const searchStr = searchItems.find(s => s.database === database)?.string || '';
-    
+  const handleCriterionStatus = async (id: string, status: 'accepted' | 'rejected') => {
     try {
-      const data = await apiPost('/api/search', { database, query: searchStr, limit: 50 });
-      
-      const realPapers: Paper[] = data.results || [];
-      const sourceLabel: string = data.source || database;
-      
-      setLiteratureResults(prev => [...prev, ...realPapers]);
-      setPrisma(prev => ({ 
-        ...prev, 
-        searched: prev.searched + realPapers.length,
-        sources: { ...prev.sources, [sourceLabel]: (prev.sources[sourceLabel] || 0) + realPapers.length }
-      }));
-    } catch(err) {
+      const updated: CriterionInfo = await apiRequest('PATCH', projectPath(`criteria/${id}`), { status });
+      const update = (items: ProtocolItem[]) => items.map(item => item.id === id ? { ...item, status: updated.status } : item);
+      setInclusionItems(update);
+      setExclusionItems(update);
+    } catch (err) {
+      alert(errorMessage(err, 'Could not update the criterion.'));
+    }
+  };
+
+  const handleAcceptAll = async (kind: 'inclusion' | 'exclusion') => {
+    try {
+      applyCriteria(await apiPost(projectPath('criteria/accept-all'), { kind }));
+    } catch (err) {
+      alert(errorMessage(err, 'Could not accept the criteria.'));
+    }
+  };
+
+  const saveSearchString = async (id: string, query: string) => {
+    if (!query.trim()) return;
+    try {
+      await apiRequest('PATCH', projectPath(`search-strategies/${id}`), { query });
+    } catch (err) {
+      alert(errorMessage(err, 'Could not save the search string.'));
+    }
+  };
+
+  const handleRunDatabaseSearch = async (item: SearchItem) => {
+    setSearchDBLoading(item.database);
+    try {
+      await apiRequest('PATCH', projectPath(`search-strategies/${item.id}`), { query: item.string });
+      await apiPost(projectPath('searches'), { strategy_id: Number(item.id), limit: 50 });
+      await refreshRecords();
+    } catch (err) {
       alert(errorMessage(err, "Failed to reach the search API. Ensure the backend is running."));
     }
     setSearchDBLoading(null);
   };
 
   const handleDownloadTemplate = () => {
-    const headers = "Source,Title,Authors,Year,DOI,Venue,Abstract,PMID\n";
+    const headers = "Title,Authors,Year,DOI,Venue,Abstract\n";
     const blob = new Blob([headers], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -249,41 +354,28 @@ function App() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
+
     setUploadLoading(true);
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
-      complete: (results) => {
-        const parsedPapers: Paper[] = [];
-        
-        results.data.forEach((row: any, i: number) => {
-          const title = row['Title'] || row['title'] || `Uploaded Paper ${i}`;
-          const author = row['Authors'] || row['Author'] || row['authors'] || row['Author(s)'] || 'Unknown';
-          const year = row['Year'] || row['year'] || '';
-          const doi = row['DOI'] || row['doi'] || '';
-          const abstract = row['Abstract'] || row['abstract'] || 'No abstract provided in CSV.';
-          const source = row['Source'] || row['source'] || 'Manual Upload (CSV)';
-          
-          parsedPapers.push({
-            id: `u-${Date.now()}-${i}`,
-            source,
-            title,
-            authors: author,
-            year,
-            doi,
-            abstract
-          });
-        });
-        
-        setLiteratureResults(prev => [...prev, ...parsedPapers]);
-        setPrisma(prev => ({ 
-          ...prev, 
-          uploaded: prev.uploaded + parsedPapers.length,
-          sources: { ...prev.sources, ['Manual Upload']: (prev.sources['Manual Upload'] || 0) + parsedPapers.length }
+      complete: async (results) => {
+        const records = (results.data as any[]).map((row, i) => ({
+          title: String(row['Title'] || row['title'] || `Uploaded record ${i + 1}`).slice(0, 2000),
+          authors: String(row['Authors'] || row['Author'] || row['authors'] || row['Author(s)'] || '').slice(0, 5000),
+          year: String(row['Year'] || row['year'] || '').slice(0, 20),
+          venue: String(row['Venue'] || row['venue'] || '').slice(0, 1000),
+          doi: String(row['DOI'] || row['doi'] || '').slice(0, 255),
+          abstract: String(row['Abstract'] || row['abstract'] || '').slice(0, 50000),
         }));
+        try {
+          if (records.length === 0) throw new ApiError('The file has no rows to import.');
+          await apiPost(projectPath('imports'), { file_name: file.name.slice(0, 200), records });
+          await refreshRecords();
+        } catch (err) {
+          alert(errorMessage(err, 'Could not import the file.'));
+        }
         setUploadLoading(false);
-        
         e.target.value = '';
       },
       error: (err) => {
@@ -294,114 +386,75 @@ function App() {
     });
   };
 
-  const handleRunDedup = () => {
+  const handleRunDedup = async () => {
     setDedupLoading(true);
-    // Simple basic deduplication by Title or DOI logic can go here. For now we just filter out explicitly identical DOIs or Titles in the array.
-    setTimeout(() => {
-      const uniqueIds = new Set();
-      const deduped: Paper[] = [];
-      let removedCount = 0;
-      
-      for(const p of literatureResults) {
-        const key = dedupKey(p);
-        if(uniqueIds.has(key)) {
-          removedCount++;
-        } else {
-          uniqueIds.add(key);
-          deduped.push(p);
-        }
-      }
-      
-      setLiteratureResults(deduped);
-      setPrisma(prev => ({ ...prev, duplicates_removed: prev.duplicates_removed + removedCount, abstract_screened: deduped.length }));
-      setDedupLoading(false);
+    try {
+      const result = await apiPost(projectPath('deduplicate'), {});
+      await refreshRecords();
+      alert(`Set aside ${result.duplicates_marked} duplicate record(s).`);
       setActiveTab('abstract');
-    }, 1000);
+    } catch (err) {
+      alert(errorMessage(err, 'Deduplication failed.'));
+    }
+    setDedupLoading(false);
   };
 
   const handleRunAbstractScreening = async () => {
-    const acceptedText = (items: ProtocolItem[]) => items.filter(i => i.status === 'accepted').map(i => i.text);
-    const inclusion = acceptedText(inclusionItems);
-    const exclusion = acceptedText(exclusionItems);
-    if (inclusion.length === 0) {
+    if (!inclusionItems.some(item => item.status === 'accepted')) {
       alert("Accept at least one inclusion criterion in the AI Protocol Builder before screening.");
+      return;
+    }
+    const ids = literatureResults.slice(0, getBatchLimit('abstract')).map(p => Number(p.id));
+    if (ids.length === 0) {
+      alert("Search for or import records first.");
       return;
     }
     setAbstractLoading(true);
     setAbstractProgress(0);
-    const limit = getBatchLimit('abstract');
-    const papersToScreen = literatureResults.slice(0, limit);
-    const criteriaStr = `Include only if all of these apply:\n- ${inclusion.join('\n- ')}\n\nExclude if any of these apply:\n- ${exclusion.length > 0 ? exclusion.join('\n- ') : '(none specified)'}`;
-    
-    const batchSize = 5;
-    const allScreened: Paper[] = [];
-    let failedBatches = 0;
-    let screenedCount = 0;
-    
-    for (let i = 0; i < papersToScreen.length; i += batchSize) {
-      const chunk = papersToScreen.slice(i, i + batchSize);
-      try {
-        const data = await apiPost('/api/screen/abstract', { papers: chunk, criteria: criteriaStr, provider: aiProvider });
-        allScreened.push(...data.results);
-      } catch(err) {
-        console.error(err);
-        failedBatches++;
-      }
-      screenedCount += chunk.length;
-      setAbstractProgress(Math.round((screenedCount / papersToScreen.length) * 100));
-    }
-    
-    const screenedDict = Object.fromEntries(allScreened.map(r => [r.id, r]));
-    setLiteratureResults(prev => prev.map(p => {
-      const r = screenedDict[p.id];
-      return r ? { ...p, ai_decision: r.ai_decision, ai_reasoning: r.ai_reasoning, ai_error: r.ai_error } : p;
-    }));
-    const failedPapers = allScreened.filter(r => r.ai_error).length;
-    if (failedBatches > 0 || failedPapers > 0) {
-      alert(`AI screening incomplete: ${failedPapers} paper(s) failed and ${failedBatches} batch(es) could not be processed. Those papers are marked "Error" and need manual screening.`);
+    const { failedBatches, failedRecords } = await runAiBatches('screening/ai', ids, 5, setAbstractProgress, r => Boolean(r.ai_screening?.error));
+    if (failedBatches > 0 || failedRecords > 0) {
+      alert(`AI screening incomplete: ${failedRecords} record(s) failed and ${failedBatches} batch(es) could not be processed. Those records are marked "Error" and need manual screening.`);
     }
     setAbstractLoading(false);
     setTimeout(() => setAbstractProgress(null), 2000);
   };
 
-  const handleUserDecision = (id: string, decision: 'Include' | 'Exclude' | 'Undecided') => {
-    setLiteratureResults(prev => prev.map(p => p.id === id ? { ...p, user_decision: decision } : p));
-    
-    // Update PRISMA dynamically based on user manual choices
-    const currentExcluded = literatureResults.filter(p => (p.id === id ? decision : p.user_decision) === 'Exclude').length;
-    setPrisma(prev => ({
-      ...prev,
-      abstract_excluded: currentExcluded,
-      fulltext_sought: prev.abstract_screened - currentExcluded
-    }));
+  const handleUserDecision = async (id: string, decision: 'Include' | 'Exclude' | 'Undecided') => {
+    try {
+      const updated: ApiRecord = await apiRequest('PUT', projectPath(`records/${id}/decision`), { decision: decision.toLowerCase() });
+      mergeRecords([updated]);
+      setPrisma(await apiRequest('GET', projectPath('prisma')));
+    } catch (err) {
+      alert(errorMessage(err, 'Could not save your decision.'));
+    }
   };
 
-  const handleResetSearch = () => {
-    if (window.confirm("Are you sure you want to clear all imported and searched literature? This cannot be undone.")) {
-      setLiteratureResults([]);
-      setPrisma(prev => ({
-        ...prev,
-        sources: {},
-        searched: 0,
-        uploaded: 0,
-        duplicates_removed: 0,
-        abstract_screened: 0,
-        abstract_excluded: 0,
-        fulltext_sought: 0,
-        fulltext_not_retrieved: 0,
-        fulltext_assessed: 0,
-        fulltext_excluded: 0,
-        final_included: 0
-      }));
+  const handleResetSearch = async () => {
+    if (!window.confirm("Are you sure you want to delete all imported and searched records, with their screening decisions and AI results? This cannot be undone.")) return;
+    try {
+      await apiRequest('DELETE', projectPath('records'));
+      await refreshRecords();
+    } catch (err) {
+      alert(errorMessage(err, 'Could not clear the records.'));
+    }
+  };
+
+  const saveExtractionColumns = async (names: string[]) => {
+    try {
+      setExtractionColumns(await apiRequest('PUT', projectPath('extraction-fields'), { names }));
+    } catch (err) {
+      alert(errorMessage(err, 'Could not save the extraction fields.'));
     }
   };
 
   const handleRemoveColumn = (colToRemove: string) => {
-    setExtractionColumns(extractionColumns.filter(c => c !== colToRemove));
+    saveExtractionColumns(extractionColumns.filter(c => c !== colToRemove));
   };
+
   const handleAddColumn = () => {
-    if (newColumn && !extractionColumns.includes(newColumn)) {
-      setExtractionColumns([...extractionColumns, newColumn]);
+    const name = newColumn.trim();
+    if (name && !extractionColumns.includes(name)) {
+      saveExtractionColumns([...extractionColumns, name]);
       setNewColumn('');
     }
   };
@@ -414,37 +467,23 @@ function App() {
     }
     setFullTextLoading(true);
     setFullTextProgress(0);
-    
-    const papersToScreen = includedPapers.slice(0, getBatchLimit('fulltext'));
-    
-    const batchSize = 3; // Smaller batch size because extraction prompts are larger
-    const allExtracted: Paper[] = [];
-    let failedBatches = 0;
-    let processedCount = 0;
-    
-    for (let i = 0; i < papersToScreen.length; i += batchSize) {
-      const chunk = papersToScreen.slice(i, i + batchSize);
-      try {
-        const data = await apiPost('/api/screen/fulltext', { papers: chunk, columns: extractionColumns, provider: aiProvider });
-        allExtracted.push(...data.results);
-      } catch (err) {
-        console.error("FullText AI failed:", err);
-        failedBatches++;
-      }
-      processedCount += chunk.length;
-      setFullTextProgress(Math.round((processedCount / papersToScreen.length) * 100));
+    const ids = includedPapers.slice(0, getBatchLimit('fulltext')).map(p => Number(p.id));
+    // Smaller batches because extraction prompts are larger.
+    const { failedBatches, failedRecords } = await runAiBatches('extraction/ai', ids, 3, setFullTextProgress, r => Boolean(r.extraction?.error));
+    if (failedBatches > 0 || failedRecords > 0) {
+      alert(`AI extraction incomplete: ${failedRecords} record(s) failed and ${failedBatches} batch(es) could not be processed.`);
     }
-    
-    const dict = Object.fromEntries(allExtracted.map(r => [r.id, r]));
-    setLiteratureResults(prev => prev.map(p => dict[p.id] ? { ...p, extracted_data: dict[p.id].extracted_data, extraction_error: dict[p.id].extraction_error } : p));
-    
-    const failedPapers = allExtracted.filter(r => r.extraction_error).length;
-    if (failedBatches > 0 || failedPapers > 0) {
-      alert(`AI extraction incomplete: ${failedPapers} paper(s) failed and ${failedBatches} batch(es) could not be processed.`);
-    }
-    
     setFullTextLoading(false);
     setTimeout(() => setFullTextProgress(null), 2000);
+  };
+
+  const handleRobToolChange = async (tool: string) => {
+    setRobTool(tool);
+    try {
+      await saveProtocol({ rob_tool: tool });
+    } catch (err) {
+      alert(errorMessage(err, 'Could not save the assessment tool.'));
+    }
   };
 
   const handleRunRob = async () => {
@@ -455,52 +494,26 @@ function App() {
     }
     setRobLoading(true);
     setRobProgress(0);
-    
-    const papersToScreen = includedPapers.slice(0, 10);
-    
-    const batchSize = 3;
-    const allRob: Paper[] = [];
-    let failedBatches = 0;
-    let processedCount = 0;
-    
-    for (let i = 0; i < papersToScreen.length; i += batchSize) {
-      const chunk = papersToScreen.slice(i, i + batchSize);
-      try {
-        const data = await apiPost('/api/screen/rob', { papers: chunk, tool: robTool, provider: aiProvider });
-        allRob.push(...data.results);
-      } catch (err) {
-        console.error("RoB AI failed:", err);
-        failedBatches++;
-      }
-      processedCount += chunk.length;
-      setRobProgress(Math.round((processedCount / papersToScreen.length) * 100));
+    const ids = includedPapers.slice(0, 10).map(p => Number(p.id));
+    const { failedBatches, failedRecords } = await runAiBatches('appraisal/ai', ids, 3, setRobProgress, r => Boolean(r.appraisal?.error));
+    if (failedBatches > 0 || failedRecords > 0) {
+      alert(`Risk of bias assessment incomplete: ${failedRecords} record(s) failed and ${failedBatches} batch(es) could not be processed.`);
     }
-    
-    const dict = Object.fromEntries(allRob.map(r => [r.id, r]));
-    setLiteratureResults(prev => prev.map(p => dict[p.id] ? { ...p, rob_data: dict[p.id].rob_data, rob_error: dict[p.id].rob_error } : p));
-    const failedPapers = allRob.filter(r => r.rob_error).length;
-    if (failedBatches > 0 || failedPapers > 0) {
-      alert(`Risk of bias assessment incomplete: ${failedPapers} paper(s) failed and ${failedBatches} batch(es) could not be processed.`);
-    }
-    
     setRobComplete(true);
     setRobLoading(false);
     setTimeout(() => setRobProgress(null), 2000);
   };
 
   const handleRunMetaAnalysis = async () => {
-    const includedPapers = humanIncludedPapers();
-    if (includedPapers.length === 0) {
+    if (humanIncludedPapers().length === 0) {
       alert("Accept at least one paper in Abstract Screening before generating a synthesis.");
       return;
     }
     setMetaLoading(true);
     setMetaReport(null);
-    
     try {
-      const papers = includedPapers.map(({ title, authors, year, doi, extracted_data, rob_data }) => ({ title, authors, year, doi, extracted_data, rob_data }));
-      const data = await apiPost('/api/screen/meta', { papers, provider: aiProvider });
-      setMetaReport(data.report);
+      const report = await apiPost(projectPath('synthesis'), { provider: aiProvider });
+      setMetaReport(report.content);
     } catch (err) {
       console.error(err);
       setMetaReport(`**Error**: ${errorMessage(err, 'Failed to generate the synthesis.')}`);
@@ -869,6 +882,7 @@ function App() {
                 <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>Detailed Extraction Outline (One per line)</label>
                 <textarea className="search-input" style={{ height: '80px', resize: 'vertical' }} placeholder="E.g. Sample Size..." value={extractionOutline} onChange={e => setExtractionOutline(e.target.value)} />
               </div>
+              <button className="btn-glass" onClick={handleSaveSetup} disabled={protocolLoading} style={{ padding: '12px', marginTop: '16px' }}>Save Setup Without AI</button>
               <button className="btn-primary" onClick={handleGenerateProtocol} disabled={protocolLoading} style={{ padding: '16px', fontSize: '1.1rem', marginTop: '16px' }}>
                 {protocolLoading ? `Compiling parameters...` : 'Compile & Send to AI Protocol Builder →'}
               </button>
@@ -884,14 +898,14 @@ function App() {
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <h4 style={{ color: '#34d399', margin: 0 }}>Inclusion Criteria</h4>
-                  <button className="btn-glass" onClick={() => handleAcceptAll(setInclusionItems, inclusionItems)} style={{ padding: '4px 8px', fontSize: '0.8rem' }}>Accept All ✓</button>
+                  <button className="btn-glass" onClick={() => handleAcceptAll('inclusion')} style={{ padding: '4px 8px', fontSize: '0.8rem' }}>Accept All ✓</button>
                 </div>
                 {inclusionItems.map(item => (
                   <div key={item.id} style={{ display: 'flex', padding: '8px', background: 'rgba(0,0,0,0.2)', marginBottom: '4px', alignItems: 'center', opacity: item.status === 'rejected' ? 0.5 : 1 }}>
                     <div style={{ flex: 1, textDecoration: item.status === 'rejected' ? 'line-through' : 'none' }}>{item.text}</div>
                     <div style={{ display: 'flex', gap: '4px' }}>
-                      <button onClick={() => handleItemStatus(setInclusionItems, inclusionItems, item.id, 'accepted')} className="btn-primary" style={{ padding: '4px', background: item.status === 'accepted' ? '#10b981' : undefined }}>✓</button>
-                      <button onClick={() => handleItemStatus(setInclusionItems, inclusionItems, item.id, 'rejected')} className="btn-glass" style={{ padding: '4px', color: '#ef4444', borderColor: item.status === 'rejected' ? '#ef4444' : undefined }}>✕</button>
+                      <button onClick={() => handleCriterionStatus(item.id, 'accepted')} className="btn-primary" style={{ padding: '4px', background: item.status === 'accepted' ? '#10b981' : undefined }}>✓</button>
+                      <button onClick={() => handleCriterionStatus(item.id, 'rejected')} className="btn-glass" style={{ padding: '4px', color: '#ef4444', borderColor: item.status === 'rejected' ? '#ef4444' : undefined }}>✕</button>
                     </div>
                   </div>
                 ))}
@@ -899,14 +913,14 @@ function App() {
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <h4 style={{ color: '#f87171', margin: 0 }}>Exclusion Criteria</h4>
-                  <button className="btn-glass" onClick={() => handleAcceptAll(setExclusionItems, exclusionItems)} style={{ padding: '4px 8px', fontSize: '0.8rem' }}>Accept All ✓</button>
+                  <button className="btn-glass" onClick={() => handleAcceptAll('exclusion')} style={{ padding: '4px 8px', fontSize: '0.8rem' }}>Accept All ✓</button>
                 </div>
                 {exclusionItems.map(item => (
                   <div key={item.id} style={{ display: 'flex', padding: '8px', background: 'rgba(0,0,0,0.2)', marginBottom: '4px', alignItems: 'center', opacity: item.status === 'rejected' ? 0.5 : 1 }}>
                     <div style={{ flex: 1, textDecoration: item.status === 'rejected' ? 'line-through' : 'none' }}>{item.text}</div>
                     <div style={{ display: 'flex', gap: '4px' }}>
-                      <button onClick={() => handleItemStatus(setExclusionItems, exclusionItems, item.id, 'accepted')} className="btn-primary" style={{ padding: '4px', background: item.status === 'accepted' ? '#10b981' : undefined }}>✓</button>
-                      <button onClick={() => handleItemStatus(setExclusionItems, exclusionItems, item.id, 'rejected')} className="btn-glass" style={{ padding: '4px', color: '#ef4444', borderColor: item.status === 'rejected' ? '#ef4444' : undefined }}>✕</button>
+                      <button onClick={() => handleCriterionStatus(item.id, 'accepted')} className="btn-primary" style={{ padding: '4px', background: item.status === 'accepted' ? '#10b981' : undefined }}>✓</button>
+                      <button onClick={() => handleCriterionStatus(item.id, 'rejected')} className="btn-glass" style={{ padding: '4px', color: '#ef4444', borderColor: item.status === 'rejected' ? '#ef4444' : undefined }}>✕</button>
                     </div>
                   </div>
                 ))}
@@ -929,11 +943,11 @@ function App() {
                 <div key={item.id} style={{ background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '8px', marginBottom: '12px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <strong style={{ fontSize: '1.1rem' }}>{item.database}</strong>
-                    <button className="btn-primary" onClick={() => handleRunDatabaseSearch(item.database)} disabled={searchDBLoading === item.database}>
+                    <button className="btn-primary" onClick={() => handleRunDatabaseSearch(item)} disabled={searchDBLoading === item.database}>
                       {searchDBLoading === item.database ? 'Querying API...' : `Search ${item.database}`}
                     </button>
                   </div>
-                  <textarea className="search-input" style={{ width: '100%', height: '60px', resize: 'vertical' }} value={item.string} onChange={e => setSearchItems(prev => prev.map(s => s.id === item.id ? { ...s, string: e.target.value } : s))} />
+                  <textarea className="search-input" style={{ width: '100%', height: '60px', resize: 'vertical' }} value={item.string} onChange={e => setSearchItems(prev => prev.map(s => s.id === item.id ? { ...s, string: e.target.value } : s))} onBlur={() => saveSearchString(item.id, item.string)} />
                 </div>
               ))}
             </div>
@@ -999,7 +1013,7 @@ function App() {
             <button className="btn-primary" onClick={handleRunDedup} disabled={dedupLoading} style={{ marginTop: '24px', padding: '16px 32px' }}>
               {dedupLoading ? 'Analyzing IDs...' : 'Run Automated Deduplication'}
             </button>
-            {prisma.duplicates_removed > 0 && (
+            {prisma !== null && prisma.duplicates_removed > 0 && (
               <div style={{ marginTop: '24px', color: '#10b981', fontSize: '1.2rem' }}>
                 ✓ Removed {prisma.duplicates_removed} duplicates. Ready for Abstract Screening.
               </div>
@@ -1089,7 +1103,7 @@ function App() {
               <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '8px' }}>Common AI Suggestions:</h4>
               <div style={{ display: 'flex', gap: '8px' }}>
                 {['Study Design', 'Intervention Details', 'Country', 'Funding Source'].map(sugg => (
-                  <button key={sugg} onClick={() => { if(!extractionColumns.includes(sugg)) setExtractionColumns([...extractionColumns, sugg]); }} className="btn-glass" style={{ padding: '4px 12px', fontSize: '0.8rem' }}>
+                  <button key={sugg} onClick={() => { if(!extractionColumns.includes(sugg)) saveExtractionColumns([...extractionColumns, sugg]); }} className="btn-glass" style={{ padding: '4px 12px', fontSize: '0.8rem' }}>
                     + {sugg}
                   </button>
                 ))}
@@ -1147,14 +1161,18 @@ function App() {
           <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
             <h3 style={{ marginBottom: '24px', color: 'var(--text-primary)' }}>8. PRISMA Flow Diagram</h3>
             <div style={{ padding: '32px', background: 'rgba(0,0,0,0.3)', borderRadius: '12px' }}>
-              <p style={{ color: 'var(--text-secondary)', marginTop: 0 }}>Counts recorded in this session. The PRISMA 2020 flow diagram itself is not generated yet.</p>
+              <p style={{ color: 'var(--text-secondary)', marginTop: 0 }}>Counts computed from the project's saved searches, imports, deduplication, and reviewer decisions. The PRISMA 2020 flow diagram itself is not generated yet.</p>
               <ul style={{ lineHeight: 1.8, margin: 0 }}>
-                <li>Records from database searches: {prisma.searched}</li>
-                <li>Records from manual upload: {prisma.uploaded}</li>
-                <li>Duplicates removed: {prisma.duplicates_removed}</li>
-                <li>Records remaining for screening: {literatureResults.length}</li>
-                <li>Excluded by a reviewer at abstract screening: {literatureResults.filter(p => p.user_decision === 'Exclude').length}</li>
-                <li>Included by a reviewer: {literatureResults.filter(p => p.user_decision === 'Include').length}</li>
+                <li>Records from database searches: {prisma?.identified_from_databases ?? 0}</li>
+                <li>Records from file uploads: {prisma?.identified_from_uploads ?? 0}</li>
+                {Object.entries(prisma?.by_source ?? {}).map(([source, count]) => (
+                  <li key={source} style={{ color: 'var(--text-secondary)', marginLeft: '16px' }}>{source}: {count}</li>
+                ))}
+                <li>Duplicates removed: {prisma?.duplicates_removed ?? 0}</li>
+                <li>Records screened: {prisma?.screened ?? 0}</li>
+                <li>Excluded by a reviewer at abstract screening: {prisma?.excluded ?? 0}</li>
+                <li>Included by a reviewer: {prisma?.included ?? 0}</li>
+                <li>Awaiting a reviewer decision: {prisma?.awaiting_decision ?? 0}</li>
               </ul>
             </div>
             <div style={{ textAlign: 'center', marginTop: '32px' }}>
@@ -1170,7 +1188,7 @@ function App() {
             <div style={{ display: 'flex', gap: '16px', marginBottom: '32px' }}>
               <div style={{ flex: 1 }}>
                 <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>Select Assessment Rubric</label>
-                <select className="search-input" value={robTool} onChange={e => setRobTool(e.target.value)}>
+                <select className="search-input" value={robTool} onChange={e => handleRobToolChange(e.target.value)}>
                   <option value="ROB-2">Cochrane RoB 2 (Randomized Trials)</option>
                   <option value="ROBINS-I">ROBINS-I (Non-randomized Interventions)</option>
                   <option value="Newcastle-Ottawa">Newcastle-Ottawa Scale (Observational)</option>
