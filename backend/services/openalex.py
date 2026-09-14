@@ -20,11 +20,11 @@ def _abstract_from_inverted_index(inverted_index: dict | None) -> str:
 
 
 def search_openalex(query: str, max_results: int = 50) -> list[dict]:
-    params = {"search": query, "per-page": min(max_results, 200)}
-    if os.getenv("OPENALEX_EMAIL"):
-        params["mailto"] = os.getenv("OPENALEX_EMAIL")
-    if os.getenv("OPENALEX_API_KEY"):
-        params["api_key"] = os.getenv("OPENALEX_API_KEY")
+    params: dict[str, str | int] = {"search": query, "per-page": min(max_results, 200)}
+    if email := os.getenv("OPENALEX_EMAIL"):
+        params["mailto"] = email
+    if api_key := os.getenv("OPENALEX_API_KEY"):
+        params["api_key"] = api_key
 
     try:
         response = requests.get(OPENALEX_WORKS_URL, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
@@ -39,14 +39,16 @@ def search_openalex(query: str, max_results: int = 50) -> list[dict]:
         authors = [(a.get("author") or {}).get("display_name") or "" for a in work.get("authorships", [])]
         authors = [name for name in authors if name]
         source = (work.get("primary_location") or {}).get("source") or {}
-        results.append({
-            "id": (work.get("id") or "").split("/")[-1],
-            "title": work.get("title") or "No Title",
-            "authors": ", ".join(authors[:3]) + (" et al." if len(authors) > 3 else ""),
-            "year": work.get("publication_year") or "",
-            "source": "OpenAlex",
-            "venue": source.get("display_name") or "",
-            "doi": (work.get("doi") or "").replace("https://doi.org/", ""),
-            "abstract": _abstract_from_inverted_index(work.get("abstract_inverted_index")),
-        })
+        results.append(
+            {
+                "id": (work.get("id") or "").split("/")[-1],
+                "title": work.get("title") or "No Title",
+                "authors": ", ".join(authors[:3]) + (" et al." if len(authors) > 3 else ""),
+                "year": work.get("publication_year") or "",
+                "source": "OpenAlex",
+                "venue": source.get("display_name") or "",
+                "doi": (work.get("doi") or "").replace("https://doi.org/", ""),
+                "abstract": _abstract_from_inverted_index(work.get("abstract_inverted_index")),
+            }
+        )
     return results

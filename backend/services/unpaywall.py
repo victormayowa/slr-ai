@@ -1,16 +1,18 @@
-import httpx
 import os
-from typing import Dict, Any
+from typing import Any
+
+import httpx
 
 # Unpaywall requires an email for their API
 UNPAYWALL_EMAIL = os.getenv("UNPAYWALL_EMAIL", "omni.review.bot@gmail.com")
 
-async def check_unpaywall(doi: str) -> Dict[str, Any]:
+
+async def check_unpaywall(doi: str) -> dict[str, Any]:
     """
     Queries the Unpaywall API to see if a DOI is open access.
     """
     url = f"https://api.unpaywall.org/v2/{doi}?email={UNPAYWALL_EMAIL}"
-    
+
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url)

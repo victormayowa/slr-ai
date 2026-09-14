@@ -1,7 +1,10 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
+from datetime import UTC, datetime
+
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
-from datetime import datetime
+
 from database import Base
+
 
 class User(Base):
     __tablename__ = "users"
@@ -15,13 +18,14 @@ class User(Base):
     position_role = Column(String)
     reason_for_joining = Column(String)
     institution = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
 
 class Project(Base):
     __tablename__ = "projects"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, index=True)
     owner_id = Column(Integer, ForeignKey("users.id"))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
     owner = relationship("User")

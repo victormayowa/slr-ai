@@ -1,6 +1,5 @@
 import os
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
 import jwt
@@ -39,8 +38,8 @@ class UserCreate(BaseModel):
     last_name: str = Field(min_length=1, max_length=100)
     email: str = Field(max_length=254, pattern=EMAIL_PATTERN)
     password: str = Field(min_length=8)
-    institutional_email: Optional[str] = Field(None, max_length=254, pattern=EMAIL_PATTERN)
-    orcid_id: Optional[str] = Field(None, max_length=50)
+    institutional_email: str | None = Field(None, max_length=254, pattern=EMAIL_PATTERN)
+    orcid_id: str | None = Field(None, max_length=50)
     position_role: str = Field(min_length=1, max_length=100)
     reason_for_joining: str = Field(min_length=1, max_length=1000)
     institution: str = Field(min_length=1, max_length=200)
@@ -60,12 +59,12 @@ class UserLogin(BaseModel):
 
 def create_access_token(data: dict):
     to_encode = data.copy()
-    to_encode.update({"exp": datetime.now(timezone.utc) + TOKEN_LIFETIME})
+    to_encode.update({"exp": datetime.now(UTC) + TOKEN_LIFETIME})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> models.User:
     unauthorized = HTTPException(
@@ -78,7 +77,7 @@ def get_current_user(
     try:
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.PyJWTError:
-        raise unauthorized
+        raise unauthorized from None
     user = db.query(models.User).filter(models.User.email == payload.get("sub")).first()
     if user is None:
         raise unauthorized
@@ -97,7 +96,7 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
     if db.query(models.User).filter(or_(*identifier_matches)).first():
         raise already_registered
 
-    hashed_pw = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    hashed_pw = bcrypt.hashpw(user.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     new_user = models.User(
         first_name=user.first_name,
         last_name=user.last_name,
@@ -107,14 +106,14 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
         hashed_password=hashed_pw,
         position_role=user.position_role,
         reason_for_joining=user.reason_for_joining,
-        institution=user.institution
+        institution=user.institution,
     )
     db.add(new_user)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise already_registered
+        raise already_registered from None
 
     return {"message": "User created successfully"}
 
@@ -122,18 +121,26 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
 @router.post("/login")
 def login_user(user: UserLogin, db: Session = Depends(get_db)):
     invalid_credentials = HTTPException(status_code=401, detail="Invalid credentials")
-    password = user.password.encode('utf-8')
+    password = user.password.encode("utf-8")
     if len(password) > BCRYPT_MAX_PASSWORD_BYTES:
         raise invalid_credentials
 
-    db_user = db.query(models.User).filter(
-        (models.User.email == user.identifier) |
-        (models.User.institutional_email == user.identifier) |
-        (models.User.orcid_id == user.identifier)
-    ).first()
+    db_user = (
+        db.query(models.User)
+        .filter(
+            (models.User.email == user.identifier)
+            | (models.User.institutional_email == user.identifier)
+            | (models.User.orcid_id == user.identifier)
+        )
+        .first()
+    )
 
-    if not db_user or not bcrypt.checkpw(password, db_user.hashed_password.encode('utf-8')):
+    if not db_user or not bcrypt.checkpw(password, db_user.hashed_password.encode("utf-8")):
         raise invalid_credentials
 
     access_token = create_access_token(data={"sub": db_user.email, "name": f"{db_user.first_name} {db_user.last_name}"})
-    return {"access_token": access_token, "token_type": "bearer", "user": {"email": db_user.email, "name": f"{db_user.first_name} {db_user.last_name}"}}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {"email": db_user.email, "name": f"{db_user.first_name} {db_user.last_name}"},
+    }

@@ -1,32 +1,78 @@
-# React + TypeScript + Vite
+# OmniReview
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+An AI-assisted platform for systematic reviews and meta-analyses, built around human decisions: the AI suggests, reviewers decide, and every number should trace back to recorded data.
 
-Currently, two official plugins are available:
+> **Status:** early prototype. The workflow screens run end to end, but full-text retrieval, statistical meta-analysis, persistence of review data, and collaboration are not built yet. See [docs/roadmap.md](docs/roadmap.md) for the full build plan.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Stack
 
-## React Compiler
+- **Frontend:** React 19, TypeScript, Vite (`src/`)
+- **Backend:** FastAPI, SQLAlchemy, Python 3.12, managed with [uv](https://docs.astral.sh/uv/) (`backend/`)
+- **AI providers:** Google Gemini, OpenAI, Anthropic (configured by API key)
+- **Literature sources:** PubMed (E-utilities), OpenAlex
+- **Infrastructure:** PostgreSQL, Redis, Caddy, Docker Compose
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Quick start with Docker
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+docker compose up --build
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+- App: http://localhost:5173
+- API docs: http://localhost:8000/docs
+
+To enable AI features, copy `backend/.env.example` to `backend/.env` and add at least one provider key. The development compose file supplies a throwaway `JWT_SECRET_KEY`; never use it in production.
+
+## Local development without Docker
+
+**Backend**
+
+```bash
+cd backend
+cp .env.example .env    # then set JWT_SECRET_KEY and provider keys
+uv sync
+uv run uvicorn main:app --reload
+```
+
+Without `DATABASE_URL`, the API uses a local SQLite file (`backend/omnireview.db`).
+
+**Frontend**
+
+```bash
+npm ci
+npm run dev
+```
+
+The frontend calls `http://localhost:8000` unless `VITE_API_URL` is set.
+
+## Checks
+
+```bash
+# Backend (from backend/)
+uv run ruff check . && uv run ruff format --check .
+uv run mypy .
+uv run pytest                 # add `-m live` to run tests that call PubMed and OpenAlex
+
+# Frontend (from the repository root)
+npm run lint
+npx tsc -b
+npm test
+npm run build
+```
+
+CI runs all of these on every push and pull request, tests the backend against PostgreSQL, audits dependencies, and builds both Docker images.
+
+## Production
+
+`docker-compose.prod.yml` runs Caddy (static frontend, automatic HTTPS, `/api` proxy), the API, PostgreSQL, and Redis on a single server:
+
+```bash
+SITE_ADDRESS=app.example.com POSTGRES_PASSWORD=change-me \
+  docker compose -f docker-compose.prod.yml up -d --build
+```
+
+`backend/.env` must contain production secrets: a random `JWT_SECRET_KEY`, provider API keys, and optionally `SENTRY_DSN`.
+
+## Configuration
+
+All backend settings are documented in [`backend/.env.example`](backend/.env.example). Never commit `backend/.env`.

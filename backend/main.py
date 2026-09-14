@@ -1,14 +1,19 @@
 import asyncio
 import logging
 import os
-from typing import Any, Awaitable, Callable, Dict, List, Literal
+from collections.abc import Awaitable, Callable
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from auth_routes import get_current_user
 from auth_routes import router as auth_router
+from database import engine
+from observability import RequestIdMiddleware, configure_logging, configure_sentry
 from services.ai_protocol import generate_protocol_elements
 from services.ai_screening import (
     ROB_TOOL_DOMAINS,
@@ -22,6 +27,8 @@ from services.errors import LLMError, SearchError
 from services.openalex import search_openalex
 from services.pubmed import search_pubmed
 
+configure_logging()
+configure_sentry()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="OmniReview API")
@@ -34,8 +41,28 @@ app.add_middleware(
     allow_origins=cors_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
+# Added last so it wraps everything, including CORS responses.
+app.add_middleware(RequestIdMiddleware)
+
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz():
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        logger.exception("Database readiness check failed")
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return {"status": "ready"}
+
 
 app.include_router(auth_router)
 
@@ -43,7 +70,7 @@ app.include_router(auth_router)
 api = APIRouter(prefix="/api", dependencies=[Depends(get_current_user)])
 
 Provider = Literal["gemini", "openai", "anthropic"]
-Papers = List[Dict[str, Any]]
+Papers = list[dict[str, Any]]
 MAX_PAPERS_PER_BATCH = 50
 MAX_PAPERS_FOR_SYNTHESIS = 200
 
@@ -67,7 +94,7 @@ class ScreenRequest(BaseModel):
 
 class FullTextRequest(BaseModel):
     papers: Papers = Field(max_length=MAX_PAPERS_PER_BATCH)
-    columns: List[str] = Field(min_length=1, max_length=50)
+    columns: list[str] = Field(min_length=1, max_length=50)
     provider: Provider = "gemini"
 
 
@@ -87,19 +114,19 @@ class ChatRequest(BaseModel):
     provider: Provider = "gemini"
 
 
-def _paper_text(paper: Dict[str, Any]) -> str:
+def _paper_text(paper: dict[str, Any]) -> str:
     return f"Title: {paper.get('title', '')}\nAbstract: {paper.get('abstract', '')}"
 
 
 async def _process_papers(
     papers: Papers,
-    task: Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]],
+    task: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
     error_key: str,
 ) -> Papers:
     """Run an AI task per paper. A failed paper gets an error message, never a made-up result."""
     outcomes = await asyncio.gather(*(task(paper) for paper in papers), return_exceptions=True)
     results = []
-    for paper, outcome in zip(papers, outcomes):
+    for paper, outcome in zip(papers, outcomes, strict=True):
         paper_copy = dict(paper)
         paper_copy.pop(error_key, None)
         if isinstance(outcome, LLMError):
@@ -115,7 +142,7 @@ async def _process_papers(
     return results
 
 
-async def _single_ai_call(call: Awaitable[Dict[str, Any]]) -> Dict[str, Any]:
+async def _single_ai_call(call: Awaitable[dict[str, Any]]) -> dict[str, Any]:
     try:
         return await call
     except LLMError as exc:
@@ -142,7 +169,7 @@ async def api_search_database(req: SearchRequest):
 
 @api.post("/screen/abstract")
 async def api_screen_abstracts(req: ScreenRequest):
-    async def screen(paper: Dict[str, Any]) -> Dict[str, Any]:
+    async def screen(paper: dict[str, Any]) -> dict[str, Any]:
         decision = await evaluate_eligibility(_paper_text(paper), req.criteria, req.provider)
         return {
             "ai_decision": decision["decision"],
@@ -155,7 +182,7 @@ async def api_screen_abstracts(req: ScreenRequest):
 
 @api.post("/screen/fulltext")
 async def api_screen_fulltext(req: FullTextRequest):
-    async def extract(paper: Dict[str, Any]) -> Dict[str, Any]:
+    async def extract(paper: dict[str, Any]) -> dict[str, Any]:
         return {"extracted_data": await extract_data_from_paper(_paper_text(paper), req.columns, req.provider)}
 
     return {"results": await _process_papers(req.papers, extract, "extraction_error")}
@@ -166,7 +193,7 @@ async def api_screen_rob(req: RobRequest):
     if req.tool not in ROB_TOOL_DOMAINS:
         raise HTTPException(status_code=400, detail=f"Unsupported risk of bias tool: {req.tool}")
 
-    async def assess(paper: Dict[str, Any]) -> Dict[str, Any]:
+    async def assess(paper: dict[str, Any]) -> dict[str, Any]:
         return {"rob_data": await assess_risk_of_bias(_paper_text(paper), req.tool, req.provider)}
 
     return {"results": await _process_papers(req.papers, assess, "rob_error")}
@@ -187,4 +214,5 @@ app.include_router(api)
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

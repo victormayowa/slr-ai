@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import Papa from 'papaparse';
+import { API_BASE, ApiError, errorDetail, errorMessage } from './api/client';
+import { dedupKey } from './lib/dedup';
 import './index.css';
 
 type ProtocolItem = { id: string; text: string; status: 'pending' | 'accepted' | 'rejected' };
@@ -17,19 +19,6 @@ const ProgressBar = ({ progress, label }: { progress: number; label: string }) =
     </div>
   </div>
 );
-
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
-
-// Carries a message from the API that is safe to show the user.
-class ApiError extends Error {}
-
-const errorDetail = (data: any, status: number): string => {
-  if (typeof data?.detail === 'string') return data.detail;
-  if (Array.isArray(data?.detail)) return data.detail.map((d: any) => d.msg).join('; ');
-  return `Request failed (${status})`;
-};
-
-const errorMessage = (err: unknown, fallback: string) => (err instanceof ApiError ? err.message : fallback);
 
 function App() {
   const [currentView, setCurrentView] = useState<'dashboard' | 'project' | 'settings'>('dashboard');
@@ -265,7 +254,7 @@ function App() {
       let removedCount = 0;
       
       for(const p of literatureResults) {
-        const key = p.doi?.trim().toLowerCase() || `title:${String(p.title).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()}`;
+        const key = dedupKey(p);
         if(uniqueIds.has(key)) {
           removedCount++;
         } else {
