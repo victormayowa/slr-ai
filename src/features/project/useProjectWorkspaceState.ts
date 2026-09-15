@@ -6,7 +6,6 @@ import { jobProblem, jobProgress, waitForJob, type AiJob } from '../../api/jobs'
 import type { ProtocolCatalog } from '../../api/protocol';
 import type { ProjectSummary } from '../../api/projects';
 import { toPaper, type ApiRecord, type CriterionInfo, type Paper, type PrismaCounts, type ProtocolSettings, type SimilarPairs, type StrategyInfo, type WorkflowStageInfo } from '../../api/review';
-import { batchLimit } from '../../app/plan';
 import { useAuth } from '../../auth/authContext';
 import type { ProjectTab } from './tabs';
 import type { ProtocolItem, SearchItem } from './types';
@@ -55,12 +54,7 @@ export function useProjectWorkspaceState(projectId: number) {
   const [literatureResults, setLiteratureResults] = useState<Paper[]>([]);
   const [dedupLoading, setDedupLoading] = useState(false);
   const [dedupVersion, setDedupVersion] = useState(0);
-  const [abstractLoading, setAbstractLoading] = useState(false);
-  const [abstractProgress, setAbstractProgress] = useState<number | null>(null);
 
-  const [extractionColumns, setExtractionColumns] = useState<string[]>([]);
-  const [fullTextLoading, setFullTextLoading] = useState(false);
-  const [fullTextProgress, setFullTextProgress] = useState<number | null>(null);
 
   const [robTool, setRobTool] = useState('ROB-2');
   const [robLoading, setRobLoading] = useState(false);
@@ -94,7 +88,6 @@ export function useProjectWorkspaceState(projectId: number) {
       apiRequest('GET', `${base}/protocol`),
       apiRequest('GET', `${base}/criteria`),
       apiRequest('GET', `${base}/search-strategies`),
-      apiRequest('GET', `${base}/extraction-fields`),
       apiRequest('GET', `${base}/synthesis`),
       apiRequest('GET', `${base}/records`),
       apiRequest('GET', `${base}/prisma`),
@@ -103,7 +96,7 @@ export function useProjectWorkspaceState(projectId: number) {
       apiRequest('GET', '/api/ai/models?purpose=embedding'),
       apiRequest('GET', '/api/protocol-frameworks'),
     ])
-      .then(([project, protocol, criteria, strategies, fields, synthesis, records, counts, stages, models, embeddingModelList, catalog]) => {
+      .then(([project, protocol, criteria, strategies, synthesis, records, counts, stages, models, embeddingModelList, catalog]) => {
         if (cancelled) return;
         const papers = (records as ApiRecord[]).map(toPaper);
         const { inclusion, exclusion } = splitCriteria(criteria);
@@ -118,7 +111,6 @@ export function useProjectWorkspaceState(projectId: number) {
         setInclusionItems(inclusion);
         setExclusionItems(exclusion);
         setSearchItems(toSearchItems(strategies));
-        setExtractionColumns(fields);
         setMetaReport(synthesis?.content ?? null);
         setLiteratureResults(papers);
         setPrisma(counts);
@@ -167,11 +159,6 @@ export function useProjectWorkspaceState(projectId: number) {
     setPrisma(counts);
     setRobComplete(papers.some(p => p.rob_data));
     await loadWorkflow();
-  };
-
-  const mergeRecords = (updated: ApiRecord[]) => {
-    const byId = new Map(updated.map(record => [String(record.id), toPaper(record)]));
-    setLiteratureResults(prev => prev.map(p => byId.get(p.id) ?? p));
   };
 
   const stageInfo = (stage: string) => workflow.find(item => item.stage === stage);
@@ -291,7 +278,6 @@ export function useProjectWorkspaceState(projectId: number) {
       const data = await apiPost(projectPath('protocol/generate'), {});
       applyCriteria(data.criteria);
       setSearchItems(toSearchItems(data.search_strategies));
-      setExtractionColumns(data.extraction_fields);
       await loadWorkflow();
       goTo('protocol');
     } catch (err) {
@@ -377,34 +363,6 @@ export function useProjectWorkspaceState(projectId: number) {
     setDedupLoading(false);
   };
 
-  const handleRunAbstractScreening = async () => {
-    if (!inclusionItems.some(item => item.status === 'accepted')) {
-      alert("Accept at least one inclusion criterion in the AI Protocol Builder before screening.");
-      return;
-    }
-    const ids = literatureResults.slice(0, batchLimit('abstract')).map(p => Number(p.id));
-    if (ids.length === 0) {
-      alert("Search for or import records first.");
-      return;
-    }
-    setAbstractLoading(true);
-    setAbstractProgress(0);
-    await runAiJob('screening/ai', ids, 'AI screening', setAbstractProgress);
-    setAbstractLoading(false);
-    setTimeout(() => setAbstractProgress(null), 2000);
-  };
-
-  const handleUserDecision = async (id: string, decision: 'Include' | 'Exclude' | 'Undecided') => {
-    try {
-      const updated: ApiRecord = await apiRequest('PUT', projectPath(`records/${id}/decision`), { decision: decision.toLowerCase() });
-      mergeRecords([updated]);
-      setPrisma(await apiRequest('GET', projectPath('prisma')));
-      await loadWorkflow();
-    } catch (err) {
-      alert(errorMessage(err, 'Could not save your decision.'));
-    }
-  };
-
   const loadSimilar = async () => {
     setSimilar(await apiRequest('GET', projectPath('similar-pairs?min_similarity=0.9')));
   };
@@ -444,29 +402,6 @@ export function useProjectWorkspaceState(projectId: number) {
     } catch (err) {
       alert(errorMessage(err, 'Could not clear the records.'));
     }
-  };
-
-  const saveExtractionColumns = async (names: string[]) => {
-    try {
-      setExtractionColumns(await apiRequest('PUT', projectPath('extraction-fields'), { names }));
-      await loadWorkflow();
-    } catch (err) {
-      alert(errorMessage(err, 'Could not save the extraction fields.'));
-    }
-  };
-
-  const handleRunFullTextPipeline = async () => {
-    const includedPapers = humanIncludedPapers();
-    if (includedPapers.length === 0) {
-      alert("Accept at least one paper in Abstract Screening before running extraction.");
-      return;
-    }
-    setFullTextLoading(true);
-    setFullTextProgress(0);
-    const ids = includedPapers.slice(0, batchLimit('fulltext')).map(p => Number(p.id));
-    await runAiJob('extraction/ai', ids, 'AI extraction', setFullTextProgress);
-    setFullTextLoading(false);
-    setTimeout(() => setFullTextProgress(null), 2000);
   };
 
   const handleRobToolChange = async (tool: string) => {
@@ -547,11 +482,6 @@ export function useProjectWorkspaceState(projectId: number) {
     dedupLoading,
     dedupVersion,
     refreshRecords,
-    abstractLoading,
-    abstractProgress,
-    extractionColumns,
-    fullTextLoading,
-    fullTextProgress,
     robTool,
     robLoading,
     robComplete,
@@ -574,11 +504,7 @@ export function useProjectWorkspaceState(projectId: number) {
     saveSearchString,
     reloadStrategies,
     handleRunDedup,
-    handleRunAbstractScreening,
-    handleUserDecision,
     handleResetSearch,
-    saveExtractionColumns,
-    handleRunFullTextPipeline,
     handleRobToolChange,
     handleRunRob,
     handleRunMetaAnalysis,

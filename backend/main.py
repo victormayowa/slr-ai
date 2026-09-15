@@ -19,6 +19,8 @@ from auth_routes import get_current_user
 from auth_routes import router as auth_router
 from database import engine, get_db
 from documents_routes import router as documents_router
+from entities_routes import router as entities_router
+from extraction_routes import router as extraction_router
 from jobs_routes import router as jobs_router
 from observability import RequestIdMiddleware, configure_logging, configure_sentry
 from other_sources_routes import router as other_sources_router
@@ -35,6 +37,7 @@ from search_quality_routes import vocabulary_router
 from security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 from services.ai_screening import answer_faq
 from services.errors import LLMError
+from studies_routes import router as studies_router
 from topic_routes import router as topic_router
 from workflow import WorkflowError
 from workflow_routes import router as workflow_router
@@ -95,6 +98,9 @@ app.include_router(search_quality_router)
 app.include_router(vocabulary_router)
 app.include_router(other_sources_router)
 app.include_router(documents_router)
+app.include_router(studies_router)
+app.include_router(extraction_router)
+app.include_router(entities_router)
 
 
 @app.exception_handler(TaskNotReady)

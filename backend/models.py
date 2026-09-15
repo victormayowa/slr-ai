@@ -6,6 +6,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -284,6 +285,9 @@ class Record(Base):
     ai_runs: Mapped[list["AIRun"]] = relationship(
         back_populates="record", cascade="all, delete-orphan", order_by="AIRun.id", passive_deletes=True
     )
+    adjudications: Mapped[list["ScreeningAdjudication"]] = relationship(
+        cascade="all, delete-orphan", order_by="ScreeningAdjudication.id", passive_deletes=True
+    )
 
 
 class AIRun(Base):
@@ -294,7 +298,9 @@ class AIRun(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     record_id: Mapped[int | None] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"), index=True)
-    # "protocol", "screening", "extraction", "appraisal", or "synthesis"
+    # Set for work on a whole study (extraction); record_id is then the study's primary report.
+    study_id: Mapped[int | None] = mapped_column(ForeignKey("studies.id", ondelete="SET NULL"))
+    # "protocol", "screening", "fulltext_screening", "extraction", "appraisal", "entities", or "synthesis"
     task: Mapped[str] = mapped_column(String(20))
     provider: Mapped[str] = mapped_column(String(20))
     model: Mapped[str] = mapped_column(String(100))
@@ -327,15 +333,27 @@ class ScreeningSuggestion(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     ai_run_id: Mapped[int] = mapped_column(ForeignKey("ai_runs.id", ondelete="CASCADE"), unique=True)
+    # The stage suggested for: TITLE_ABSTRACT, or FULL_TEXT (read from document_id's passages).
+    stage: Mapped[str] = mapped_column(String(20), default="title_abstract", server_default="title_abstract")
     # "Include", "Exclude", or "Maybe"
     decision: Mapped[str] = mapped_column(String(10))
     reasoning: Mapped[str] = mapped_column(Text, default="")
     supporting_quote: Mapped[str | None] = mapped_column(Text)
     # Whether supporting_quote appears in the record's text; null when there is no quote.
     quote_verified: Mapped[bool | None] = mapped_column(Boolean)
+    # The model's confidence in its suggestion, from 0 to 1.
+    confidence: Mapped[float | None] = mapped_column(Float)
+    # [{"criterion_id", "kind", "text", "judgment": "met" | "not_met" | "unclear", "rationale", "quote",
+    #   "quote_verified", "span_id"}] for each accepted criterion.
+    criteria_judgments: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"))
+    supporting_span_id: Mapped[int | None] = mapped_column(ForeignKey("document_spans.id", ondelete="SET NULL"))
 
 
 TITLE_ABSTRACT = "title_abstract"
+FULL_TEXT = "full_text"
 
 
 class ScreeningDecision(Base):
@@ -346,17 +364,42 @@ class ScreeningDecision(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"), index=True)
+    # TITLE_ABSTRACT or FULL_TEXT
     stage: Mapped[str] = mapped_column(String(20))
     reviewer_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    # "include", "exclude", or "undecided"
-    decision: Mapped[str] = mapped_column(String(10))
+    # "include", "exclude", or "undecided"; at full text also "not_retrieved" (the report couldn't be obtained)
+    decision: Mapped[str] = mapped_column(String(20))
+    # Why a report was excluded at full text (review_settings.exclusion_reasons).
+    reason_code: Mapped[str | None] = mapped_column(String(60))
+    note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     record: Mapped[Record] = relationship(back_populates="decisions")
     reviewer: Mapped[User] = relationship()
 
 
+class ScreeningAdjudication(Base):
+    """The final decision on a record whose reviewers disagreed, made by a third reviewer with a rationale."""
+
+    __tablename__ = "screening_adjudications"
+    __table_args__ = (UniqueConstraint("record_id", "stage", name="uq_screening_adjudication"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"))
+    stage: Mapped[str] = mapped_column(String(20))
+    decision: Mapped[str] = mapped_column(String(20))
+    reason_code: Mapped[str | None] = mapped_column(String(60))
+    rationale: Mapped[str] = mapped_column(Text)
+    adjudicator_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    adjudicator: Mapped[User | None] = relationship()
+
+
 class ExtractionField(Base):
+    """One item of the extraction form. The value shape depends on field_type (extraction_values.FIELD_TYPES)."""
+
     __tablename__ = "extraction_fields"
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_extraction_field_name"),)
 
@@ -364,19 +407,49 @@ class ExtractionField(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     position: Mapped[int] = mapped_column(Integer, default=0)
+    section: Mapped[str] = mapped_column(String(100), default="General", server_default="General")
+    field_type: Mapped[str] = mapped_column(String(30), default="text", server_default="text")
+    # Choices for categorical and multiple-choice fields.
+    options: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    # The unit values are normalized to, when set.
+    unit: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    required: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    help_text: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Extracted once per study arm rather than once per study.
+    per_arm: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # The analysis plan outcome and timepoint the field measures, if any.
+    outcome: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    timepoint: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    # Extra options, such as {"analyte": "glucose", "ontology": "mesh", "direction": "lower_is_better"}.
+    settings: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
 
 
 class ExtractionSuggestion(Base):
+    """A value proposed by AI extraction. Never final: a reviewer accepts it into their own values."""
+
     __tablename__ = "extraction_suggestions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     ai_run_id: Mapped[int] = mapped_column(ForeignKey("ai_runs.id", ondelete="CASCADE"), index=True)
     field_id: Mapped[int] = mapped_column(ForeignKey("extraction_fields.id", ondelete="CASCADE"))
+    study_id: Mapped[int | None] = mapped_column(ForeignKey("studies.id", ondelete="CASCADE"), index=True)
+    # The arm the value belongs to, as named in the report; empty for study-level fields.
+    arm_label: Mapped[str] = mapped_column(String(200), default="", server_default="")
     value: Mapped[str] = mapped_column(Text)
+    # The value in the field type's shape (extraction_values), when it could be read that way.
+    structured: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    unit: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    not_reported: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # The passage the AI says the value comes from, and whether it appears in the record's text.
     # quote_verified is null when no value was reported.
     evidence_quote: Mapped[str | None] = mapped_column(Text)
     quote_verified: Mapped[bool | None] = mapped_column(Boolean)
+    # Passages of the study's documents that hold the quote, found by the grounding check.
+    span_ids: Mapped[list[int]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    confidence: Mapped[float | None] = mapped_column(Float)
+    ambiguous: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # "grounded", "ungrounded" (the quote wasn't found, so the value can't be accepted), or "not_reported"
+    grounding: Mapped[str] = mapped_column(String(20), default="", server_default="")
 
     field: Mapped[ExtractionField] = relationship()
 
@@ -764,3 +837,308 @@ class FullTextRetrieval(Base):
 
     document: Mapped[Document | None] = relationship()
     requested_by: Mapped[User | None] = relationship()
+
+
+class ReviewSettings(Base):
+    """How a project runs screening and extraction (review_settings.py). Absent means the defaults."""
+
+    __tablename__ = "review_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), unique=True)
+    screening: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    extraction: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ScreeningModelRun(Base):
+    """One training of the prioritization model (active_learning.py) and the ranking it produced."""
+
+    __tablename__ = "screening_model_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    algorithm: Mapped[str] = mapped_column(String(40))
+    includes: Mapped[int] = mapped_column(Integer)
+    excludes: Mapped[int] = mapped_column(Integer)
+    # Human decisions in the project when the model was trained, to tell when it's due for retraining.
+    decisions_count: Mapped[int] = mapped_column(Integer)
+    ranked: Mapped[int] = mapped_column(Integer)
+    top_terms: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ScreeningRank(Base):
+    __tablename__ = "screening_ranks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    model_run_id: Mapped[int] = mapped_column(ForeignKey("screening_model_runs.id", ondelete="CASCADE"), index=True)
+    record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"))
+    score: Mapped[float] = mapped_column(Float)
+    rank: Mapped[int] = mapped_column(Integer)
+
+
+class StoppingEvaluation(Base):
+    """A stopping-rule test (stopping.py). Accepting it is a signed decision that screening may stop early."""
+
+    __tablename__ = "stopping_evaluations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    method: Mapped[str] = mapped_column(String(30))
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    # Unique records and human decisions when evaluated; the evaluation no longer applies once either changes.
+    records_total: Mapped[int] = mapped_column(Integer)
+    decisions_count: Mapped[int] = mapped_column(Integer)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    accepted_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    acceptance_rationale: Mapped[str | None] = mapped_column(Text)
+
+    accepted_by: Mapped[User | None] = relationship(foreign_keys=[accepted_by_id])
+
+
+class QASample(Base):
+    """A random sample of records not screened by humans (for example after stopping), screened to estimate recall."""
+
+    __tablename__ = "qa_samples"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    record_ids: Mapped[list[int]] = mapped_column(JSONB)
+    # Unscreened records the sample was drawn from.
+    pool_size: Mapped[int] = mapped_column(Integer)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Study(Base):
+    """A study, which may be described by several reports (records). Extraction is done per study."""
+
+    __tablename__ = "studies"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    label: Mapped[str] = mapped_column(String(300))
+    # Trial registration numbers, such as ["NCT01234567"].
+    registry_ids: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    reports: Mapped[list["StudyReport"]] = relationship(
+        back_populates="study", cascade="all, delete-orphan", order_by="StudyReport.id", passive_deletes=True
+    )
+    arms: Mapped[list["StudyArm"]] = relationship(
+        cascade="all, delete-orphan", order_by="StudyArm.position", passive_deletes=True
+    )
+
+
+class StudyReport(Base):
+    __tablename__ = "study_reports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id", ondelete="CASCADE"), index=True)
+    record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"), unique=True)
+    # The main report of the study, used to label it and read first.
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    linked_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    study: Mapped[Study] = relationship(back_populates="reports")
+    record: Mapped[Record] = relationship()
+
+
+class StudyLinkDecision(Base):
+    """A reviewer's decision that two reports describe different studies, so the pair isn't suggested again."""
+
+    __tablename__ = "study_link_decisions"
+    __table_args__ = (UniqueConstraint("record_id", "other_record_id", name="uq_study_link_decision"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"))
+    other_record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"))
+    # "different_studies"
+    decision: Mapped[str] = mapped_column(String(20))
+    decided_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DocumentEntity(Base):
+    """A mention in a document (condition, intervention, outcome...) linked to a terminology code once confirmed."""
+
+    __tablename__ = "document_entities"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
+    span_id: Mapped[int | None] = mapped_column(ForeignKey("document_spans.id", ondelete="CASCADE"))
+    # entity_linking.ENTITY_TYPES
+    entity_type: Mapped[str] = mapped_column(String(30))
+    # "mesh", "rxnorm", "atc", or "icd11", with the chosen code and its preferred label.
+    ontology: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    code: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    label: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    # Codes found by terminology lookup: [{"ontology", "code", "label"}].
+    candidates: Mapped[list[dict[str, str]]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    text: Mapped[str] = mapped_column(String(500))
+    # "suggested", "confirmed", or "rejected"
+    status: Mapped[str] = mapped_column(String(20))
+    # "ai" or "reviewer"
+    source: Mapped[str] = mapped_column(String(20))
+    ai_run_id: Mapped[int | None] = mapped_column(ForeignKey("ai_runs.id", ondelete="SET NULL"))
+    reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class StudyArm(Base):
+    __tablename__ = "study_arms"
+    __table_args__ = (UniqueConstraint("study_id", "label", name="uq_study_arm_label"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id", ondelete="CASCADE"), index=True)
+    label: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text, default="", server_default="")
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ExtractionValue(Base):
+    """One extractor's value for a field of a study (and arm). Dual extraction keeps each extractor's values apart."""
+
+    __tablename__ = "extraction_values"
+    __table_args__ = (
+        Index(
+            "uq_extraction_value",
+            "study_id",
+            "field_id",
+            "arm_id",
+            "extractor_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id", ondelete="CASCADE"), index=True)
+    field_id: Mapped[int] = mapped_column(ForeignKey("extraction_fields.id", ondelete="CASCADE"))
+    arm_id: Mapped[int | None] = mapped_column(ForeignKey("study_arms.id", ondelete="CASCADE"))
+    extractor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # In the field type's shape (extraction_values); null when not reported.
+    value: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    not_reported: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    unit: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    # Evidence: passages of the study's documents and the quoted text.
+    span_ids: Mapped[list[int]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    quote: Mapped[str | None] = mapped_column(Text)
+    # Such as "calculated", "imputed", "unit_converted", or "ambiguous".
+    flags: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    # How a calculated, converted, or imputed value was derived: method, inputs, formula, reference.
+    derivation: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # "manual", "ai_accepted", "calculated", or "imputed"
+    source: Mapped[str] = mapped_column(String(20))
+    ai_suggestion_id: Mapped[int | None] = mapped_column(ForeignKey("extraction_suggestions.id", ondelete="SET NULL"))
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Imputed values need approval from someone other than the extractor before the dataset can be locked.
+    approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    extractor: Mapped[User | None] = relationship(foreign_keys=[extractor_id])
+
+
+class ExtractionFinal(Base):
+    """The dataset's value: agreed by extractors, reconciled by a reviewer, or from single extraction."""
+
+    __tablename__ = "extraction_finals"
+    __table_args__ = (
+        Index("uq_extraction_final", "study_id", "field_id", "arm_id", unique=True, postgresql_nulls_not_distinct=True),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id", ondelete="CASCADE"), index=True)
+    field_id: Mapped[int] = mapped_column(ForeignKey("extraction_fields.id", ondelete="CASCADE"))
+    arm_id: Mapped[int | None] = mapped_column(ForeignKey("study_arms.id", ondelete="CASCADE"))
+    value: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    not_reported: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    unit: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    span_ids: Mapped[list[int]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    flags: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    derivation: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # "single", "agreed", or "reconciled"
+    source: Mapped[str] = mapped_column(String(20))
+    rationale: Mapped[str] = mapped_column(Text, default="", server_default="")
+    decided_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ExtractionValueRevision(Base):
+    """Cell-level history: every change to an extractor's value or a final value, with who changed it and why."""
+
+    __tablename__ = "extraction_value_revisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id", ondelete="CASCADE"), index=True)
+    field_id: Mapped[int] = mapped_column(ForeignKey("extraction_fields.id", ondelete="CASCADE"))
+    arm_id: Mapped[int | None] = mapped_column(ForeignKey("study_arms.id", ondelete="CASCADE"))
+    extractor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # "value" (an extractor's) or "final"
+    kind: Mapped[str] = mapped_column(String(10))
+    previous: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    new: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+    changed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    changed_by: Mapped[User | None] = relationship(foreign_keys=[changed_by_id])
+
+
+class AuthorContact(Base):
+    """A request to a study's authors for missing or unclear data, and its correspondence."""
+
+    __tablename__ = "author_contacts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id", ondelete="CASCADE"), index=True)
+    contact_name: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str] = mapped_column(String(320))
+    field_ids: Mapped[list[int]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    questions: Mapped[str] = mapped_column(Text)
+    # "draft", "sent", "replied", "no_response", or "closed"
+    status: Mapped[str] = mapped_column(String(20))
+    # When to follow up (YYYY-MM-DD) if there's no reply.
+    reminder_due: Mapped[str | None] = mapped_column(String(10))
+    response_summary: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    messages: Mapped[list["AuthorContactMessage"]] = relationship(
+        cascade="all, delete-orphan", order_by="AuthorContactMessage.occurred_at", passive_deletes=True
+    )
+
+
+class AuthorContactMessage(Base):
+    __tablename__ = "author_contact_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contact_id: Mapped[int] = mapped_column(ForeignKey("author_contacts.id", ondelete="CASCADE"), index=True)
+    # "outgoing" or "incoming"
+    direction: Mapped[str] = mapped_column(String(10))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    subject: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    body: Mapped[str] = mapped_column(Text)
+    logged_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

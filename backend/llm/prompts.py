@@ -55,8 +55,8 @@ database name (for example PubMed or Embase) and a complete search string in tha
 
 SCREENING_PROMPT = PromptTemplate(
     "screening",
-    2,
-    """You are an expert systematic reviewer screening a record's title and abstract against eligibility criteria.
+    3,
+    """You are an expert systematic reviewer screening a study report's $stage against eligibility criteria.
 $untrusted_text_note
 
 <criteria>
@@ -67,31 +67,58 @@ $criteria
 $paper
 </paper>
 
-Suggest "Include", "Exclude", or "Maybe". Use "Maybe" when the title and abstract don't contain enough information to
-decide. Give concise reasoning that refers to the criteria.
-For supporting_quote, copy one short passage from the paper text exactly, word for word, that supports the suggestion,
-or use null if there is none. Never paraphrase a quote.""",
+For every criterion, return its number (the digits after C) as criterion_id, a judgment of "met", "not_met", or
+"unclear", a one-sentence rationale, and a short quote copied word for word from the paper that supports the judgment,
+or null. $passage_instruction
+Then suggest "Include", "Exclude", or "Maybe": Exclude when an inclusion criterion is clearly not met or an exclusion
+criterion is clearly met; Include when every inclusion criterion is met and no exclusion criterion is met; otherwise
+Maybe, which is right whenever the text doesn't report enough to decide. Give your confidence in the suggestion from 0
+to 1, concise reasoning that refers to the criteria, and one supporting_quote copied word for word, or null.
+Never paraphrase a quote.""",
 )
 
 EXTRACTION_PROMPT = PromptTemplate(
     "extraction",
-    2,
-    """You are a systematic reviewer extracting data from a study report.
+    3,
+    """You are a systematic reviewer extracting data from the reports of one study.
 $untrusted_text_note
 
 <paper>
 $paper
 </paper>
 
+The study's arms: $arms
+
 Extract a value for each of these fields, using only the paper text above:
 <fields>
 $fields
 </fields>
 
-Return one entry in "values" for every field, with the field name exactly as written.
-If the paper text doesn't report a field, set its value to "Not Reported" and its quote to null.
-Otherwise set quote to the exact passage, copied word for word, that the value comes from. Never paraphrase a quote,
-and never infer a value the text doesn't state.""",
+Return entries in "values" with field_id set to the number after F. For a field extracted once per arm, return one entry
+per arm with arm set to the arm's name exactly as listed; otherwise set arm to null. Also list the study's arms in arms.
+For structured types, put the numbers in components using the component names given; otherwise put the value in value.
+Give the unit when the paper states one. If the paper doesn't report a field, set not_reported to true and leave the
+value empty. Otherwise set quote to the exact passage, copied word for word, that the value comes from.
+$passage_instruction
+Set confidence from 0 to 1 and ambiguous to true when the report is unclear or inconsistent about the value.
+Never paraphrase a quote, never calculate or convert values yourself, and never infer a value the text
+doesn't state.""",
+)
+
+ENTITY_PROMPT = PromptTemplate(
+    "entities",
+    1,
+    """You are annotating a study report for a systematic review.
+$untrusted_text_note
+
+<paper>
+$paper
+</paper>
+
+List the distinct conditions, interventions or exposures, drugs, outcomes, population characteristics, and diagnostic
+tests or measurements the study investigates. For each, give text copied exactly as it appears in one passage, its
+entity_type, and passage_id set to the number of that passage (after P). Give each concept once, using its most
+specific mention. Leave out concepts only mentioned in passing, such as in the background or discussion.""",
 )
 
 APPRAISAL_PROMPT = PromptTemplate(
@@ -236,6 +263,7 @@ PROMPTS = {
         PROTOCOL_PROMPT,
         SCREENING_PROMPT,
         EXTRACTION_PROMPT,
+        ENTITY_PROMPT,
         APPRAISAL_PROMPT,
         SYNTHESIS_PROMPT,
         FAQ_PROMPT,

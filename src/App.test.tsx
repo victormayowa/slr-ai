@@ -55,6 +55,19 @@ const WORKSPACE_API = {
     stage('screening', 'Title and abstract screening', 'open'),
   ],
   'GET /api/ai/models': [GEMINI, MISTRAL],
+  'GET /api/projects/7/review-settings': {
+    screening: { title_abstract_reviewers: 1, full_text_reviewers: 1, blind_dual_screening: true, recall_target: 0.95, stopping_alpha: 0.05, retrain_every: 10, custom_exclusion_reasons: [] },
+    extraction: { mode: 'single', numeric_absolute_tolerance: 0, numeric_relative_tolerance: 0 },
+    exclusion_reasons: [{ code: 'wrong_population', label: 'Wrong population' }],
+  },
+  'GET /api/projects/7/screening/queue': {
+    stage: 'title_abstract', remaining: 1, model: null,
+    records: [{
+      id: 11, title: 'Low-dose aspirin trial', authors: 'Smith J', year: '2019', venue: '', doi: '10.1/a', abstract: 'Adults randomized.', source: 'PubMed',
+      screening: { title_abstract: { state: 'unscreened', final_decision: null, reason_code: null, my_decision: null, my_reason_code: null, my_note: null, reviewers_decided: 0, reviewers_required: 1 }, full_text: { state: 'unscreened', final_decision: null, reason_code: null, my_decision: null, my_reason_code: null, my_note: null, reviewers_decided: 0, reviewers_required: 1 } },
+      ai_screening: null, ai_screening_hidden: false, ai_full_text_screening: null, priority: null,
+    }],
+  },
   'GET /api/protocol-frameworks': CATALOG,
 };
 
@@ -120,7 +133,7 @@ describe('App routing', () => {
     signIn();
 
     expect(await screen.findByRole('heading', { name: 'Abstract Screening' })).toBeTruthy();
-    expect(screen.getByText('Low-dose aspirin trial')).toBeTruthy();
+    expect(await screen.findByText('Low-dose aspirin trial')).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Title and abstract screening sign-off' })).toBeTruthy();
   });
 
@@ -233,6 +246,70 @@ describe('App routing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'View passages' }));
     expect(await screen.findByText('We randomized 120 adults.')).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Passages of PMC1.xml' })).toBeTruthy();
+  });
+
+  it('needs a reason to exclude a report at full-text screening', async () => {
+    const fetchMock = mockApi({
+      'POST /api/auth/login': LOGIN,
+      ...WORKSPACE_API,
+      'GET /api/projects/7/full-texts': { records: [], counts: { sought: 1, retrieved: 0, not_retrieved: 1 }, max_document_bytes: 1000, unpaywall_configured: true },
+      'PUT /api/projects/7/records/11/decision': {},
+    });
+    renderApp('/projects/7/full-text-screening');
+
+    signIn();
+
+    expect(await screen.findByRole('heading', { name: 'Full-Text Screening' })).toBeTruthy();
+    const exclude = await screen.findByRole('button', { name: '✕ Exclude' });
+    expect((exclude as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Exclusion reason for Low-dose aspirin trial'), { target: { value: 'wrong_population' } });
+    fireEvent.click(exclude);
+
+    await vi.waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true));
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
+    expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({ decision: 'exclude', stage: 'full_text', reason_code: 'wrong_population' });
+  });
+
+  it('accepts a grounded AI extraction suggestion into the extractor\'s own value', async () => {
+    const field = {
+      id: 5, name: 'Pain score', position: 0, section: 'Outcomes', field_type: 'continuous', options: [], unit: '', required: true,
+      help_text: '', per_arm: false, outcome: '', timepoint: '', settings: {},
+    };
+    const settings = { mode: 'single', numeric_absolute_tolerance: 0, numeric_relative_tolerance: 0 };
+    const cell = {
+      field_id: 5, arm_id: null, arm_label: null, state: 'empty', my_value: null, other_values: [], values_hidden: false, final: null, ai_hidden: false, missing_components: [],
+      ai_suggestion: {
+        id: 9, value: '', structured: { mean: 5, sd: 1, n: 60 }, display: 'mean=5, sd=1, n=60', unit: '', not_reported: false,
+        quote: 'Mean pain 5 (SD 1)', span_ids: [], confidence: 0.8, ambiguous: false, grounding: 'grounded', arm_label: '',
+      },
+    };
+    const fetchMock = mockApi({
+      'POST /api/auth/login': LOGIN,
+      ...WORKSPACE_API,
+      'GET /api/projects/7/extraction/form': {
+        fields: [field], field_types: [{ key: 'continuous', label: 'Continuous outcome', components: ['mean', 'sd', 'n'] }], templates: [], conversions: [],
+        units: { groups: {}, analytes: [] }, settings, analysis_outcomes: [],
+      },
+      'GET /api/projects/7/extraction/progress': {
+        totals: { studies: 1, unlinked_reports: 0, cells: 1, settled: 0, missing_required: 1, discrepancies: 0, awaiting: 0, unapproved_imputations: 0 },
+        studies: [{ study_id: 3, label: 'Smith 2019', cells: 1, settled: 0, discrepancies: 0, awaiting: 0, missing_required: 1 }],
+        discrepancies: [], mode: 'single',
+      },
+      'GET /api/projects/7/studies/3/extraction': {
+        study: { id: 3, label: 'Smith 2019', registry_ids: [], arms: [], reports: [{ record_id: 11, title: 'Low-dose aspirin trial', doi: '', is_primary: true, document_id: null, file_name: null }] },
+        fields: [field], cells: [cell], settings, can_reconcile: true, can_extract: true,
+      },
+      'GET /api/projects/7/author-contacts': [],
+      'PUT /api/projects/7/studies/3/extraction/values': { ...cell, state: 'final' },
+    });
+    renderApp('/projects/7/extraction');
+
+    signIn();
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept as my value' }));
+
+    await vi.waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true));
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
+    expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({ field_id: 5, arm_id: null, source: 'ai_accepted', ai_suggestion_id: 9 });
   });
 
   it('explains when a project cannot be opened', async () => {

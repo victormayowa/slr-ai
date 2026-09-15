@@ -19,7 +19,7 @@ from permissions import Permission
 from projects_routes import ProjectAccess, project_access
 from rate_limiting import ai_rate_limit
 from records_routes import new_record, record_out, run_out, with_record_details
-from review_data import final_decision
+from review_settings import review_policy
 from search_sources import GREY_LITERATURE_TYPES
 from services.errors import SearchError
 from workflow import WorkflowError, require_stage_open
@@ -104,7 +104,8 @@ async def run_citation_search(
         )
     ).all()
     if body.record_ids is None:
-        seeds = [record for record in records if final_decision(record) == "include"]
+        policy = review_policy(db, access.project.id)
+        seeds = [record for record in records if policy.final(record) == "include"]
         if not seeds:
             raise HTTPException(
                 status_code=400, detail="Choose records to search from, or include records at screening"

@@ -18,18 +18,23 @@ from sqlalchemy.orm import Session, selectinload
 import models
 from audit import record_event
 from dedup import candidate_pairs, find_duplicates, reviewed_pairs
+from extraction_data import dataset_content, extraction_progress, included_records
 from permissions import Permission
+from prisma_flow import accepted_stopping
 from protocol_design import project_sections, protocol_issues
 from protocol_frameworks import PROTOCOL_SECTIONS, REQUIRED_SECTIONS
-from review_data import TITLE_ABSTRACT, final_decision, has_successful_run, latest_run
+from review_data import FULL_TEXT, TITLE_ABSTRACT, ReviewPolicy, has_successful_run, latest_run
+from review_settings import review_policy
 from search_quality import press_status
+from studies import ensure_studies
 
-STAGES = ["protocol", "search", "screening", "extraction", "appraisal", "synthesis"]
+STAGES = ["protocol", "search", "screening", "full_text_screening", "extraction", "appraisal", "synthesis"]
 
 STAGE_LABELS = {
     "protocol": "Protocol",
     "search": "Search and deduplication",
     "screening": "Title and abstract screening",
+    "full_text_screening": "Full-text screening",
     "extraction": "Data extraction",
     "appraisal": "Risk of bias assessment",
     "synthesis": "Synthesis",
@@ -40,6 +45,7 @@ STAGE_PERMISSIONS = {
     "protocol": Permission.APPROVE_PROTOCOL,
     "search": Permission.MANAGE_WORKFLOW,
     "screening": Permission.MANAGE_WORKFLOW,
+    "full_text_screening": Permission.MANAGE_WORKFLOW,
     "extraction": Permission.MANAGE_WORKFLOW,
     "appraisal": Permission.MANAGE_WORKFLOW,
     "synthesis": Permission.APPROVE_ANALYSIS,
@@ -114,6 +120,7 @@ def _load_records(db: Session, project_id: int) -> list[models.Record]:
             .where(models.Record.project_id == project_id)
             .options(
                 selectinload(models.Record.decisions),
+                selectinload(models.Record.adjudications),
                 selectinload(models.Record.ai_runs).selectinload(models.AIRun.appraisal),
                 selectinload(models.Record.ai_runs)
                 .selectinload(models.AIRun.extraction_values)
@@ -124,8 +131,16 @@ def _load_records(db: Session, project_id: int) -> list[models.Record]:
     )
 
 
-def _included(records: list[models.Record]) -> list[models.Record]:
-    return [r for r in records if r.duplicate_of_id is None and final_decision(r) == "include"]
+def _included(records: list[models.Record], policy: ReviewPolicy) -> list[models.Record]:
+    return [r for r in records if policy.included(r)]
+
+
+def _decisions_out(record: models.Record, stage: str) -> list[dict[str, Any]]:
+    return [
+        {"reviewer_id": d.reviewer_id, "decision": d.decision, "reason_code": d.reason_code}
+        for d in record.decisions
+        if d.stage == stage
+    ]
 
 
 def _count(db: Session, model: Any, project_id: int) -> int:
@@ -184,24 +199,73 @@ def requirements(db: Session, project: models.Project, stage: str) -> list[Requi
                 Requirement(f"Registry record updated with protocol version {latest_version}", False)
             )
         return search_requirements
+    policy = review_policy(db, project.id)
+    unique = [r for r in records if r.duplicate_of_id is None]
     if stage == "screening":
-        unique = [r for r in records if r.duplicate_of_id is None]
-        return [
-            Requirement(
-                "Every record has an include or exclude decision",
-                all(final_decision(r) in ("include", "exclude") for r in unique),
-            )
+        statuses = [(r, policy.status(r, TITLE_ABSTRACT)) for r in unique]
+        stop = accepted_stopping(db, project.id, TITLE_ABSTRACT, len(unique))
+        # An accepted stopping rule covers records nobody has screened, but never a record a reviewer wants to include.
+        uncovered = [
+            r
+            for r, status in statuses
+            if status.final not in ("include", "exclude")
+            and (stop is None or any(d.decision == "include" for d in r.decisions if d.stage == TITLE_ABSTRACT))
         ]
-
-    included = _included(records)
-    if stage == "extraction":
-        return [
-            Requirement("At least one included record", bool(included)),
+        screening_requirements = [
             Requirement(
-                "Every included record has extraction results",
-                all(has_successful_run(r, "extraction") for r in included),
+                "Every record has an include or exclude decision (or an accepted stopping rule covers the rest)",
+                not uncovered,
+            ),
+            Requirement(
+                "No unresolved disagreements between reviewers",
+                not any(status.state == "conflict" for _, status in statuses),
             ),
         ]
+        sample = db.scalar(
+            select(models.QASample)
+            .where(models.QASample.project_id == project.id, models.QASample.stage == TITLE_ABSTRACT)
+            .order_by(models.QASample.id.desc())
+            .limit(1)
+        )
+        if sample is not None:
+            by_id = {r.id: r for r in unique}
+            screening_requirements.append(
+                Requirement(
+                    "Every record in the quality-assurance sample screened",
+                    all(policy.final(by_id[i]) in ("include", "exclude") for i in sample.record_ids if i in by_id),
+                )
+            )
+        return screening_requirements
+    if stage == "full_text_screening":
+        full_text_statuses = [policy.status(r, FULL_TEXT) for r in unique if policy.sought(r)]
+        return [
+            Requirement(
+                "Every report sought has a full-text decision (included, excluded with a reason, or not retrieved)",
+                all(status.final in ("include", "exclude", "not_retrieved") for status in full_text_statuses),
+            ),
+            Requirement(
+                "No unresolved disagreements between reviewers",
+                not any(s.state == "conflict" for s in full_text_statuses),
+            ),
+            Requirement(
+                "Every excluded report has an exclusion reason",
+                all(status.reason_code for status in full_text_statuses if status.final == "exclude"),
+            ),
+        ]
+    if stage == "extraction":
+        progress = extraction_progress(db, project.id)
+        return [
+            Requirement("At least one included study", progress.studies > 0),
+            Requirement("Every included report belongs to a study", progress.unlinked_reports == 0),
+            Requirement(
+                "Every required field has a final value for every included study (and arm)",
+                progress.missing_required == 0,
+            ),
+            Requirement("No unresolved discrepancies between extractors", progress.discrepancies == 0),
+            Requirement("Every imputed value approved by a second reviewer", progress.unapproved_imputations == 0),
+        ]
+
+    included = _included(records, policy)
     return [
         Requirement(
             "Every included record has a risk of bias assessment",
@@ -281,46 +345,67 @@ def _snapshot_content(db: Session, project: models.Project, stage: str) -> dict[
                 {"id": r.id, "title": r.title, "doi": r.doi, "duplicate_of_id": r.duplicate_of_id} for r in records
             ],
         }
-    if stage == "screening":
-        return {
-            "records": [
+    policy = review_policy(db, project.id)
+    if stage in ("screening", "full_text_screening"):
+        screening_stage = TITLE_ABSTRACT if stage == "screening" else FULL_TEXT
+        unique = [r for r in records if r.duplicate_of_id is None]
+        content_records = []
+        for record in unique:
+            if screening_stage == FULL_TEXT and not policy.sought(record):
+                continue
+            status = policy.status(record, screening_stage)
+            adjudication = next((a for a in record.adjudications if a.stage == screening_stage), None)
+            content_records.append(
                 {
-                    "record_id": r.id,
-                    "final_decision": final_decision(r),
-                    "reviewer_decisions": [
-                        {"reviewer_id": d.reviewer_id, "decision": d.decision}
-                        for d in r.decisions
-                        if d.stage == TITLE_ABSTRACT
-                    ],
+                    "record_id": record.id,
+                    "final_decision": status.final,
+                    "reason_code": status.reason_code,
+                    "state": status.state,
+                    "reviewer_decisions": _decisions_out(record, screening_stage),
+                    "adjudication": {
+                        "decision": adjudication.decision,
+                        "reason_code": adjudication.reason_code,
+                        "rationale": adjudication.rationale,
+                        "adjudicator_id": adjudication.adjudicator_id,
+                    }
+                    if adjudication
+                    else None,
                 }
-                for r in records
-                if r.duplicate_of_id is None
-            ]
+            )
+        snapshot: dict[str, Any] = {
+            "reviewers_per_record": policy.reviewers(screening_stage),
+            "records": content_records,
         }
+        if stage == "screening":
+            stop = accepted_stopping(db, project.id, TITLE_ABSTRACT, len(unique))
+            snapshot["stopping_rule"] = (
+                {
+                    "evaluation_id": stop.id,
+                    "method": stop.method,
+                    "result": stop.result,
+                    "accepted_by_id": stop.accepted_by_id,
+                    "rationale": stop.acceptance_rationale,
+                }
+                if stop
+                else None
+            )
+        return snapshot
+    if stage == "extraction":
+        return dataset_content(db, project.id)
 
     content: list[dict[str, Any]] = []
-    for record in _included(records):
-        run = latest_run(record, stage if stage == "extraction" else "appraisal")
+    for record in _included(records, policy):
+        run = latest_run(record, "appraisal")
         if run is None:
             continue
-        if stage == "extraction":
-            content.append(
-                {
-                    "record_id": record.id,
-                    "title": record.title,
-                    "ai_run_id": run.id,
-                    "values": {value.field.name: value.value for value in run.extraction_values},
-                }
-            )
-        else:
-            content.append(
-                {
-                    "record_id": record.id,
-                    "ai_run_id": run.id,
-                    "tool": run.appraisal.tool if run.appraisal else None,
-                    "judgments": run.appraisal.judgments if run.appraisal else None,
-                }
-            )
+        content.append(
+            {
+                "record_id": record.id,
+                "ai_run_id": run.id,
+                "tool": run.appraisal.tool if run.appraisal else None,
+                "judgments": run.appraisal.judgments if run.appraisal else None,
+            }
+        )
     return {"records": content}
 
 
@@ -352,6 +437,9 @@ def complete_stage(
     if unmet:
         raise WorkflowError(f"{STAGE_LABELS[stage]} isn't ready to complete: {'; '.join(unmet)}.")
 
+    if stage == "full_text_screening":
+        # Every included report starts as its own study; reviewers link reports of the same study during extraction.
+        ensure_studies(db, project.id, included_records(db, project.id, review_policy(db, project.id)), actor.id)
     row = _stage_rows(db, project.id).get(stage) or models.ProjectStage(project_id=project.id, stage=stage)
     content = _snapshot_content(db, project, stage)
     if stage == "protocol":

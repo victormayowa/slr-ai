@@ -1,10 +1,10 @@
+import json
 from dataclasses import replace
 
 import pytest
 from sqlalchemy import select
 from workflow_helpers import (
     APPRAISAL_REPLY,
-    EXTRACTION_REPLY,
     GENERATED_PROTOCOL,
     PROTOCOL,
     RECORDS,
@@ -13,6 +13,8 @@ from workflow_helpers import (
     complete_stage,
     create_project,
     decide,
+    extract,
+    form_fields,
     generate_protocol,
     import_records,
     lock_protocol,
@@ -266,8 +268,14 @@ def test_deduplication_and_prisma_counts_come_from_stored_data(client, project, 
         "excluded": 0,
         "included": 0,
         "awaiting_decision": 2,
+        "excluded_by_automation": 0,
         "reports_sought_for_retrieval": 0,
         "reports_not_retrieved": 0,
+        "reports_assessed": 0,
+        "reports_excluded": {},
+        "awaiting_full_text_decision": 0,
+        "studies_included": 0,
+        "reports_of_included_studies": 0,
     }
 
 
@@ -391,30 +399,60 @@ def test_duplicate_records_cannot_be_decided(client, project, fake_provider):
 def test_extraction_and_appraisal_run_only_on_included_records(client, project, fake_provider):
     project_id, headers = project
     included, excluded = open_extraction(client, project_id, headers, fake_provider)
-    fake_provider(EXTRACTION_REPLY)
+    studies = client.get(url(project_id, "studies"), headers=headers).json()
+    assert [[report["record_id"] for report in study["reports"]] for study in studies] == [[included["id"]]]
+    study_id = studies[0]["id"]
+    fields = {name: field["id"] for name, field in form_fields(client, project_id, headers).items()}
+    fake_provider(
+        json.dumps(
+            {
+                "arms": [],
+                "values": [
+                    {"field_id": fields["Sample Size"], "value": "120", "quote": "Adults  RANDOMIZED to aspirin."},
+                    {"field_id": fields["Mean Age"], "not_reported": True},
+                    {"field_id": fields["Adverse Events"], "value": "Bleeding", "quote": "Bleeding was common."},
+                ],
+            }
+        )
+    )
 
-    excluded_body = {"record_ids": [excluded["id"]]}
-    assert client.post(url(project_id, "extraction/ai"), json=excluded_body, headers=headers).status_code == 400
+    job = client.post(url(project_id, "extraction/ai"), json={"study_ids": [study_id]}, headers=headers)
 
-    body = {"record_ids": [included["id"]]}
-    extracted = run_ai(client, project_id, headers, "extraction/ai", body)[0]
-    assert extracted["extraction"]["values"] == {
-        "Sample Size": "120",
-        "Mean Age": "Missing from AI response",
-        "Primary Outcome Result": "Missing from AI response",
-        "Adverse Events": "Missing from AI response",
-        "Country": "Missing from AI response",
-        "Follow-up": "Missing from AI response",
+    assert job.status_code == 202, job.text
+    assert job.json()["status"] == "completed", job.json()
+    cells = {
+        cell["field_id"]: cell
+        for cell in client.get(url(project_id, f"studies/{study_id}/extraction"), headers=headers).json()["cells"]
     }
-    assert extracted["extraction"]["evidence"]["Sample Size"] == {
-        "quote": "Adults randomized to aspirin.",
-        "verified": True,
-    }
-    assert extracted["extraction"]["evidence"]["Mean Age"] == {"quote": None, "verified": None}
+    assert cells[fields["Sample Size"]]["ai_suggestion"]["grounding"] == "grounded"
+    assert cells[fields["Mean Age"]]["ai_suggestion"]["grounding"] == "not_reported"
+    ungrounded = cells[fields["Adverse Events"]]["ai_suggestion"]
+    assert ungrounded["grounding"] == "ungrounded"
+    accept = {"source": "ai_accepted"}
+    rejected = client.put(
+        url(project_id, f"studies/{study_id}/extraction/values"),
+        json={"field_id": fields["Adverse Events"], "ai_suggestion_id": ungrounded["id"], **accept},
+        headers=headers,
+    )
+    assert rejected.status_code == 409
+    accepted = extract(
+        client,
+        project_id,
+        headers,
+        study_id,
+        fields["Sample Size"],
+        ai_suggestion_id=cells[fields["Sample Size"]]["ai_suggestion"]["id"],
+        **accept,
+    )
+    assert (accepted["state"], accepted["final"]["display"]) == ("final", "120")
     complete_stage(client, project_id, headers, "extraction")
 
+    assert (
+        client.post(url(project_id, "appraisal/ai"), json={"record_ids": [excluded["id"]]}, headers=headers).status_code
+        == 400
+    )
     fake_provider(APPRAISAL_REPLY)
-    appraised = run_ai(client, project_id, headers, "appraisal/ai", body)[0]
+    appraised = run_ai(client, project_id, headers, "appraisal/ai", {"record_ids": [included["id"]]})[0]
     assert appraised["appraisal"]["tool"] == "ROB-2"
     assert appraised["appraisal"]["judgments"]["D1: Randomization"] == "Low"
     assert appraised["appraisal"]["judgments"]["D2: Deviations"] == "Missing from AI response"
@@ -425,7 +463,7 @@ def test_screeners_cannot_run_extraction(client, project, make_user):
     project_id, owner = project
     screener = add_member(client, project_id, owner, make_user, "screener")
 
-    response = client.post(url(project_id, "extraction/ai"), json={"record_ids": [1]}, headers=screener)
+    response = client.post(url(project_id, "extraction/ai"), json={"study_ids": [1]}, headers=screener)
 
     assert response.status_code == 403
 

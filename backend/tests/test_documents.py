@@ -386,7 +386,7 @@ def test_documents_can_be_changed_only_during_screening_or_extraction(client, pr
     response = upload(client, project_id, headers, record["id"], "notes.txt", b"Methods\nRandomized.")
 
     assert response.status_code == 409
-    assert "screening or extraction" in response.json()["detail"]
+    assert "full-text screening, or extraction" in response.json()["detail"]
 
 
 def test_uploads_are_size_limited_and_need_extraction_permission(client, screening, make_user, monkeypatch):

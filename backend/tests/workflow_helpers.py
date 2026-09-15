@@ -88,10 +88,11 @@ def generate_protocol(client, project_id, headers, fake_provider):
     return response.json()
 
 
-def decide(client, project_id, headers, record_id, decision):
-    response = client.put(
-        url(project_id, f"records/{record_id}/decision"), json={"decision": decision}, headers=headers
-    )
+def decide(client, project_id, headers, record_id, decision, stage="title_abstract", reason_code=None):
+    body = {"decision": decision, "stage": stage}
+    if reason_code:
+        body["reason_code"] = reason_code
+    response = client.put(url(project_id, f"records/{record_id}/decision"), json=body, headers=headers)
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -139,8 +140,8 @@ def open_screening(client, project_id, headers, fake_provider, records=RECORDS):
     return imported
 
 
-def open_extraction(client, project_id, headers, fake_provider):
-    """Screen RECORDS (include the first, exclude the second) and sign off screening. Returns both records."""
+def open_full_text_screening(client, project_id, headers, fake_provider):
+    """Screen RECORDS at title and abstract (include the first, exclude the second) and sign off. Returns both."""
     included, excluded = open_screening(client, project_id, headers, fake_provider)
     decide(client, project_id, headers, included["id"], "include")
     decide(client, project_id, headers, excluded["id"], "exclude")
@@ -148,13 +149,35 @@ def open_extraction(client, project_id, headers, fake_provider):
     return included, excluded
 
 
+def open_extraction(client, project_id, headers, fake_provider):
+    """Include the first of RECORDS at title/abstract and full text, and sign off both stages. Returns both records."""
+    included, excluded = open_full_text_screening(client, project_id, headers, fake_provider)
+    decide(client, project_id, headers, included["id"], "include", stage="full_text")
+    complete_stage(client, project_id, headers, "full_text_screening")
+    return included, excluded
+
+
+def form_fields(client, project_id, headers):
+    response = client.get(url(project_id, "extraction/form"), headers=headers)
+    assert response.status_code == 200, response.text
+    return {field["name"]: field for field in response.json()["fields"]}
+
+
+def extract(client, project_id, headers, study_id, field_id, value=None, **extra):
+    body = {"field_id": field_id, "value": value, **extra}
+    response = client.put(url(project_id, f"studies/{study_id}/extraction/values"), json=body, headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def open_synthesis(client, project_id, headers, fake_provider):
-    """Run and sign off extraction and appraisal for the included record. Returns it."""
+    """Extract a value for the included study, run appraisal, and sign off both stages. Returns the included record."""
     included, _ = open_extraction(client, project_id, headers, fake_provider)
-    body = {"record_ids": [included["id"]]}
-    fake_provider(EXTRACTION_REPLY)
-    run_ai(client, project_id, headers, "extraction/ai", body)
+    study = client.get(url(project_id, "studies"), headers=headers).json()[0]
+    field = form_fields(client, project_id, headers)["Sample Size"]
+    extract(client, project_id, headers, study["id"], field["id"], {"text": "120"})
     complete_stage(client, project_id, headers, "extraction")
+    body = {"record_ids": [included["id"]]}
     fake_provider(APPRAISAL_REPLY)
     run_ai(client, project_id, headers, "appraisal/ai", body)
     complete_stage(client, project_id, headers, "appraisal")

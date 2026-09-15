@@ -1,4 +1,4 @@
-"""Starting background AI jobs (record batches and embeddings) and checking their progress."""
+"""Starting background AI jobs (record and study batches, and embeddings) and checking their progress."""
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -7,7 +7,15 @@ from sqlalchemy.orm import Session
 
 import models
 from ai_access import project_embedding_ai
-from ai_tasks import MAX_RECORDS_PER_JOB, TASK_STAGES, TaskNotReady, load_records, prepare_task
+from ai_tasks import (
+    MAX_RECORDS_PER_JOB,
+    TASK_STAGES,
+    TaskNotReady,
+    load_records,
+    load_studies,
+    prepare_extraction,
+    prepare_task,
+)
 from database import get_db
 from jobs import job_out, start_job
 from permissions import Permission
@@ -22,6 +30,10 @@ MAX_RECORDS_PER_EMBEDDING_JOB = 5000
 
 class AIBatchRequest(BaseModel):
     record_ids: list[int] = Field(min_length=1, max_length=MAX_RECORDS_PER_JOB)
+
+
+class StudyBatchRequest(BaseModel):
+    study_ids: list[int] = Field(min_length=1, max_length=MAX_RECORDS_PER_JOB)
 
 
 async def _start_record_job(db: Session, access: ProjectAccess, task: str, record_ids: list[int]) -> dict:
@@ -39,17 +51,32 @@ async def start_screening_job(
     access: ProjectAccess = Depends(project_access(Permission.SCREEN)),
     db: Session = Depends(get_db),
 ):
-    """Queue AI screening suggestions for the records. Poll GET /jobs/{job_id} for progress."""
+    """Queue AI title and abstract screening suggestions for the records. Poll GET /jobs/{job_id} for progress."""
     return await _start_record_job(db, access, "screening", body.record_ids)
+
+
+@router.post("/full-text-screening/ai", status_code=202, dependencies=[Depends(ai_rate_limit)])
+async def start_full_text_screening_job(
+    body: AIBatchRequest,
+    access: ProjectAccess = Depends(project_access(Permission.SCREEN)),
+    db: Session = Depends(get_db),
+):
+    """Queue AI full-text screening suggestions, read from each record's parsed full text."""
+    return await _start_record_job(db, access, "fulltext_screening", body.record_ids)
 
 
 @router.post("/extraction/ai", status_code=202, dependencies=[Depends(ai_rate_limit)])
 async def start_extraction_job(
-    body: AIBatchRequest,
+    body: StudyBatchRequest,
     access: ProjectAccess = Depends(project_access(Permission.EXTRACT)),
     db: Session = Depends(get_db),
 ):
-    return await _start_record_job(db, access, "extraction", body.record_ids)
+    """Queue AI extraction suggestions for the studies, read from their reports' full texts."""
+    require_stage_open(db, access.project.id, "extraction")
+    studies = load_studies(db, access.project.id, body.study_ids)
+    prepare_extraction(db, access, studies)
+    job = await start_job(db, access, "extraction", [study.id for study in studies])
+    return job_out(job)
 
 
 @router.post("/appraisal/ai", status_code=202, dependencies=[Depends(ai_rate_limit)])

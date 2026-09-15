@@ -24,6 +24,7 @@ from document_parsing import (
     parse_document,
     span_offsets,
 )
+from llm.grounding import Passage
 from projects_routes import ProjectAccess
 from security import MAX_DOCUMENT_BYTES
 from services.fulltext import find_full_text, record_ids
@@ -42,14 +43,54 @@ class DuplicateDocument(Exception):
 
 
 def require_documents_open(db: Session, project_id: int) -> None:
-    """Full texts are gathered during screening and used during extraction, so either stage must be open."""
-    try:
-        require_stage_open(db, project_id, "screening")
-    except WorkflowError:
+    """Full texts are gathered during screening and used through extraction, so one of those stages must be open."""
+    for stage in ("screening", "full_text_screening", "extraction"):
         try:
-            require_stage_open(db, project_id, "extraction")
-        except WorkflowError as exc:
-            raise WorkflowError("Full texts can be added or changed while screening or extraction is open.") from exc
+            require_stage_open(db, project_id, stage)
+            return
+        except WorkflowError:
+            continue
+    raise WorkflowError(
+        "Full texts can be added or changed while screening, full-text screening, or extraction is open."
+    )
+
+
+# Parsed full texts are preferred in this order: publisher XML keeps the structure best.
+_PARSER_PREFERENCE = ("jats", "docx", "pypdf", "text")
+
+
+def best_full_texts(db: Session, record_ids: list[int]) -> dict[int, models.Document]:
+    """Each record's best parsed full text, if it has one."""
+    documents = db.scalars(
+        select(models.Document)
+        .where(
+            models.Document.record_id.in_(record_ids),
+            models.Document.role == "full_text",
+            models.Document.parse_status == "parsed",
+        )
+        .order_by(models.Document.id.desc())
+    ).all()
+    best: dict[int, models.Document] = {}
+
+    def rank(document: models.Document) -> int:
+        return next((i for i, prefix in enumerate(_PARSER_PREFERENCE) if document.parser.startswith(prefix)), 9)
+
+    for document in documents:
+        current = best.get(document.record_id)
+        if current is None or rank(document) < rank(current):
+            best[document.record_id] = document
+    return best
+
+
+def document_passages(db: Session, document_ids: list[int]) -> dict[int, list[Passage]]:
+    passages: dict[int, list[Passage]] = {document_id: [] for document_id in document_ids}
+    for span in db.scalars(
+        select(models.DocumentSpan)
+        .where(models.DocumentSpan.document_id.in_(document_ids))
+        .order_by(models.DocumentSpan.document_id, models.DocumentSpan.position)
+    ):
+        passages[span.document_id].append(Passage(span.id, span.text, span.kind, span.section, span.page, span.label))
+    return passages
 
 
 def unpaywall_email() -> str:

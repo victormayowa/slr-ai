@@ -1,12 +1,15 @@
-"""AI work done per record by background jobs: screening, extraction, and appraisal suggestions, and embeddings.
+"""AI work done by background jobs: screening suggestions (title and abstract, and full text), extraction suggestions
+per study, appraisal suggestions, embeddings, and full-text retrieval.
 
-`prepare_task` checks everything a task needs, so the API can refuse a job before queueing it; the worker checks again
-when the job runs, because the project may have changed in between. Records are processed in chunks, and every outcome,
-including failures, is committed as each chunk finishes so progress is visible while the job runs.
+`prepare_task` and `prepare_extraction` check everything a task needs, so the API can refuse a job before queueing it;
+the worker checks again when the job runs, because the project may have changed in between. Work is processed in
+chunks, and every outcome, including failures, is committed as each chunk finishes so progress is visible while the job
+runs.
 """
 
 import asyncio
 import hashlib
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -14,25 +17,31 @@ from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 import models
 from ai_access import new_ai_run, project_ai, project_embedding_ai, record_usage
 from audit import record_event
 from database import SessionLocal
-from documents import require_documents_open, retrieve_full_texts
+from documents import best_full_texts, document_passages, require_documents_open, retrieve_full_texts
+from extraction_data import included_records, project_fields
+from extraction_values import parse_suggestion
+from llm.grounding import Passage, locate_quote, quote_is_grounded, select_passages
 from llm.prompts import APPRAISAL_PROMPT, EXTRACTION_PROMPT, SCREENING_PROMPT, PromptTemplate
 from llm.runner import AIContext, AIResult, embed
 from permissions import Permission, has_permission
 from projects_routes import ProjectAccess
 from records_routes import with_record_details
-from review_data import final_decision
+from review_data import FULL_TEXT, TITLE_ABSTRACT
+from review_settings import review_policy
 from services.ai_screening import (
+    CriterionPrompt,
     Eligibility,
-    ExtractedField,
+    FieldPrompt,
+    StudyExtractionOutput,
     assess_risk_of_bias,
     evaluate_eligibility,
-    extract_data_from_paper,
+    extract_study_data,
 )
 from services.errors import LLMError
 from workflow import WorkflowError, require_stage_open
@@ -41,15 +50,23 @@ logger = logging.getLogger(__name__)
 
 MAX_RECORDS_PER_JOB = 500
 CHUNK_SIZE = 10
+# Characters of full text sent to the AI for one report or study (about 30,000 tokens).
+FULL_TEXT_MAX_CHARS = 120_000
 TASK_PERMISSIONS = {
     "screening": Permission.SCREEN,
+    "fulltext_screening": Permission.SCREEN,
     "extraction": Permission.EXTRACT,
     "appraisal": Permission.APPRAISE,
     "embedding": Permission.RUN_SEARCH,
     "fulltext": Permission.EXTRACT,
 }
-# The workflow stage each record task changes. Embeddings are derived data and don't depend on a stage.
-TASK_STAGES = {"screening": "screening", "extraction": "extraction", "appraisal": "appraisal"}
+# The workflow stage each AI task works in. Embeddings are derived data and don't depend on a stage.
+TASK_STAGES = {
+    "screening": "screening",
+    "fulltext_screening": "full_text_screening",
+    "extraction": "extraction",
+    "appraisal": "appraisal",
+}
 # Recorded as the prompt version of embedding runs; change it whenever paper_text changes.
 EMBEDDING_TEXT_VERSION = "embedding-text-v1"
 
@@ -80,10 +97,28 @@ def load_records(db: Session, project_id: int, record_ids: list[int]) -> list[mo
     return [by_id[record_id] for record_id in unique_ids]
 
 
-def _require_included(records: list[models.Record]) -> None:
-    not_included = [record.id for record in records if final_decision(record) != "include"]
+def load_studies(db: Session, project_id: int, study_ids: list[int]) -> list[models.Study]:
+    unique_ids = list(dict.fromkeys(study_ids))
+    rows = db.scalars(
+        select(models.Study)
+        .where(models.Study.project_id == project_id, models.Study.id.in_(unique_ids))
+        .options(
+            selectinload(models.Study.reports).selectinload(models.StudyReport.record), selectinload(models.Study.arms)
+        )
+    ).all()
+    by_id = {study.id: study for study in rows}
+    if len(by_id) != len(unique_ids):
+        raise TaskNotReady("One or more studies were not found in this project", status_code=404)
+    return [by_id[study_id] for study_id in unique_ids]
+
+
+def _require_included(db: Session, project_id: int, records: list[models.Record]) -> None:
+    policy = review_policy(db, project_id)
+    not_included = [record.id for record in records if not policy.included(record)]
     if not_included:
-        raise TaskNotReady(f"Only records a reviewer has included can be processed. Not included: {not_included[:20]}")
+        raise TaskNotReady(
+            f"Only records included at full-text screening can be processed. Not included: {not_included[:20]}"
+        )
 
 
 @dataclass
@@ -94,67 +129,74 @@ class PreparedTask:
     store: Callable[[models.AIRun, Any], None]
 
 
+def _accepted_criteria(db: Session, project_id: int) -> list[CriterionPrompt]:
+    accepted = db.scalars(
+        select(models.Criterion)
+        .where(models.Criterion.project_id == project_id, models.Criterion.status == "accepted")
+        .order_by(models.Criterion.id)
+    ).all()
+    if not any(c.kind == "inclusion" for c in accepted):
+        raise TaskNotReady("Accept at least one inclusion criterion before screening")
+    return [CriterionPrompt(c.id, c.kind, c.text) for c in accepted]
+
+
+def _screening_store(stage: str, documents: dict[int, models.Document]) -> Callable[[models.AIRun, Any], None]:
+    def store(run: models.AIRun, result: Eligibility) -> None:
+        document = documents.get(run.record.id) if run.record is not None else None
+        run.screening = models.ScreeningSuggestion(
+            stage=stage,
+            decision=result.decision,
+            reasoning=result.reasoning,
+            supporting_quote=result.supporting_quote,
+            quote_verified=result.quote_verified,
+            confidence=result.confidence,
+            criteria_judgments=result.criteria_judgments,
+            document_id=document.id if document else None,
+            supporting_span_id=result.supporting_span_id,
+        )
+
+    return store
+
+
 def _prepare_screening(db: Session, access: ProjectAccess, records: list[models.Record]) -> PreparedTask:
     if any(record.duplicate_of_id is not None for record in records):
         raise TaskNotReady("Duplicate records are not screened")
-    accepted = db.scalars(
-        select(models.Criterion)
-        .where(models.Criterion.project_id == access.project.id, models.Criterion.status == "accepted")
-        .order_by(models.Criterion.id)
-    ).all()
-    inclusion = [c.text for c in accepted if c.kind == "inclusion"]
-    exclusion = [c.text for c in accepted if c.kind == "exclusion"]
-    if not inclusion:
-        raise TaskNotReady("Accept at least one inclusion criterion before screening")
-    criteria = "Include only if all of these apply:\n- " + "\n- ".join(inclusion)
-    criteria += "\n\nExclude if any of these apply:\n- " + ("\n- ".join(exclusion) or "(none specified)")
+    criteria = _accepted_criteria(db, access.project.id)
     ai = project_ai(db, access)
 
     async def call(record: models.Record) -> AIResult[Eligibility]:
         return await evaluate_eligibility(ai, paper_text(record), criteria)
 
-    def store(run: models.AIRun, result: Eligibility) -> None:
-        run.screening = models.ScreeningSuggestion(
-            decision=result.decision,
-            reasoning=result.reasoning,
-            supporting_quote=result.supporting_quote,
-            quote_verified=result.quote_verified,
-        )
-
-    return PreparedTask(ai, SCREENING_PROMPT, call, store)
+    return PreparedTask(ai, SCREENING_PROMPT, call, _screening_store(TITLE_ABSTRACT, {}))
 
 
-def _prepare_extraction(db: Session, access: ProjectAccess, records: list[models.Record]) -> PreparedTask:
-    fields = list(access.project.extraction_fields)
-    if not fields:
-        raise TaskNotReady("Add at least one extraction field first")
-    _require_included(records)
-    field_names = [field.name for field in fields]
-    fields_by_name = {field.name: field for field in fields}
+def _prepare_full_text_screening(db: Session, access: ProjectAccess, records: list[models.Record]) -> PreparedTask:
+    if any(record.duplicate_of_id is not None for record in records):
+        raise TaskNotReady("Duplicate records are not screened")
+    policy = review_policy(db, access.project.id)
+    not_sought = [record.id for record in records if not policy.sought(record)]
+    if not_sought:
+        raise TaskNotReady(f"Only records included at title and abstract are screened at full text: {not_sought[:20]}")
+    criteria = _accepted_criteria(db, access.project.id)
+    documents = best_full_texts(db, [record.id for record in records])
+    missing = [record.id for record in records if record.id not in documents]
+    if missing:
+        raise TaskNotReady(f"These records have no readable full text yet (see Full Texts): {missing[:20]}")
+    passages = document_passages(db, [document.id for document in documents.values()])
     ai = project_ai(db, access)
 
-    async def call(record: models.Record) -> AIResult[list[ExtractedField]]:
-        return await extract_data_from_paper(ai, paper_text(record), field_names)
+    async def call(record: models.Record) -> AIResult[Eligibility]:
+        selected = select_passages(passages[documents[record.id].id], FULL_TEXT_MAX_CHARS)
+        return await evaluate_eligibility(ai, "", criteria, selected)
 
-    def store(run: models.AIRun, extracted: list[ExtractedField]) -> None:
-        run.extraction_values = [
-            models.ExtractionSuggestion(
-                field=fields_by_name[item.field],
-                value=item.value,
-                evidence_quote=item.quote,
-                quote_verified=item.quote_verified,
-            )
-            for item in extracted
-        ]
-
-    return PreparedTask(ai, EXTRACTION_PROMPT, call, store)
+    return PreparedTask(ai, SCREENING_PROMPT, call, _screening_store(FULL_TEXT, documents))
 
 
 def _prepare_appraisal(db: Session, access: ProjectAccess, records: list[models.Record]) -> PreparedTask:
     if access.project.protocol is None:
         raise TaskNotReady("This project has no protocol", status_code=404)
     tool = access.project.protocol.rob_tool
-    _require_included(records)
+    _require_included(db, access.project.id, records)
     ai = project_ai(db, access)
 
     async def call(record: models.Record) -> AIResult[dict[str, str]]:
@@ -166,7 +208,11 @@ def _prepare_appraisal(db: Session, access: ProjectAccess, records: list[models.
     return PreparedTask(ai, APPRAISAL_PROMPT, call, store)
 
 
-_PREPARERS = {"screening": _prepare_screening, "extraction": _prepare_extraction, "appraisal": _prepare_appraisal}
+_PREPARERS = {
+    "screening": _prepare_screening,
+    "fulltext_screening": _prepare_full_text_screening,
+    "appraisal": _prepare_appraisal,
+}
 
 
 def prepare_task(db: Session, access: ProjectAccess, task: str, records: list[models.Record]) -> PreparedTask:
@@ -215,6 +261,175 @@ async def process_records(
             "prompt_version": prepared.prompt.id,
             "key_source": prepared.ai.key_source,
             "record_ids": [record.id for record in records],
+            "failed": job.failed,
+        },
+    )
+    db.commit()
+
+
+# --- Extraction, per study ---
+
+
+@dataclass
+class StudyContext:
+    passages: list[Passage]
+    abstract_text: str
+    primary_record_id: int
+
+
+@dataclass
+class PreparedExtraction:
+    ai: AIContext
+    fields: list[models.ExtractionField]
+    contexts: dict[int, StudyContext]
+
+
+def prepare_extraction(db: Session, access: ProjectAccess, studies: list[models.Study]) -> PreparedExtraction:
+    fields = project_fields(db, access.project.id)
+    if not fields:
+        raise TaskNotReady("Add at least one extraction field first")
+    included = {record.id for record in included_records(db, access.project.id, review_policy(db, access.project.id))}
+    not_included = [study.id for study in studies if not any(r.record_id in included for r in study.reports)]
+    if not_included:
+        raise TaskNotReady(f"Only studies included in the review can be extracted: {not_included[:20]}")
+    ai = project_ai(db, access)
+    record_ids = [report.record_id for study in studies for report in study.reports]
+    documents = best_full_texts(db, record_ids)
+    passages = document_passages(db, [document.id for document in documents.values()])
+    contexts = {}
+    for study in studies:
+        reports = sorted(study.reports, key=lambda report: (not report.is_primary, report.id))
+        study_passages = [
+            passage
+            for report in reports
+            if report.record_id in documents
+            for passage in passages[documents[report.record_id].id]
+        ]
+        contexts[study.id] = StudyContext(
+            select_passages(study_passages, FULL_TEXT_MAX_CHARS),
+            "\n\n".join(paper_text(report.record) for report in reports),
+            reports[0].record_id,
+        )
+    return PreparedExtraction(ai, fields, contexts)
+
+
+def store_extraction(
+    run: models.AIRun,
+    study: models.Study,
+    context: StudyContext,
+    fields: list[models.ExtractionField],
+    output: StudyExtractionOutput,
+) -> None:
+    """Keep each suggested value with its grounding: a value whose quote can't be found in the study's text is kept but
+    marked ungrounded, and can't be accepted."""
+    fields_by_id = {item.id: item for item in fields}
+    seen: set[tuple[int, str]] = set()
+    for item in output.values:
+        field = fields_by_id.get(item.field_id)
+        if field is None:
+            continue
+        arm = (item.arm or "").strip() if field.per_arm else ""
+        if (field.id, arm.casefold()) in seen:
+            continue
+        seen.add((field.id, arm.casefold()))
+        quote = (item.quote or "").strip() or None
+        span_ids: list[int] = []
+        structured = None
+        if item.not_reported:
+            text, grounding, verified = "Not Reported", "not_reported", None
+        else:
+            if item.value is not None:
+                text = str(item.value)
+            elif item.components:
+                text = json.dumps(item.components)
+            else:
+                text = ""
+            structured = parse_suggestion(field, text, item.components)
+            if quote is None:
+                verified = False
+            elif context.passages:
+                span_id = locate_quote(quote, context.passages, item.passage_ids)
+                verified = span_id is not None
+                span_ids = [span_id] if span_id is not None else []
+            else:
+                verified = quote_is_grounded(quote, context.abstract_text)
+            grounding = "grounded" if verified else "ungrounded"
+        run.extraction_values.append(
+            models.ExtractionSuggestion(
+                field_id=field.id,
+                study_id=study.id,
+                arm_label=arm[:200],
+                value=text[:20_000],
+                structured=structured,
+                unit=(item.unit or "")[:40],
+                not_reported=item.not_reported,
+                evidence_quote=quote,
+                quote_verified=verified,
+                span_ids=span_ids,
+                confidence=item.confidence,
+                ambiguous=item.ambiguous,
+                grounding=grounding,
+            )
+        )
+
+
+async def process_studies(
+    db: Session, access: ProjectAccess, job: models.AIJob, prepared: PreparedExtraction, studies: list[models.Study]
+) -> None:
+    prompts = [
+        FieldPrompt(f.id, f.name, f.field_type, f.per_arm, f.unit, tuple(f.options), f.help_text)
+        for f in prepared.fields
+    ]
+    for start in range(0, len(studies), CHUNK_SIZE):
+        chunk = studies[start : start + CHUNK_SIZE]
+        outcomes = await asyncio.gather(
+            *(
+                extract_study_data(
+                    prepared.ai,
+                    prepared.contexts[study.id].passages,
+                    prepared.contexts[study.id].abstract_text,
+                    prompts,
+                    [arm.label for arm in study.arms],
+                )
+                for study in chunk
+            ),
+            return_exceptions=True,
+        )
+        for study, outcome in zip(chunk, outcomes, strict=True):
+            context = prepared.contexts[study.id]
+            run = new_ai_run(access, "extraction", EXTRACTION_PROMPT, prepared.ai)
+            run.study_id, run.record_id = study.id, context.primary_record_id
+            db.add(run)
+            if isinstance(outcome, LLMError):
+                run.status, run.error = "failed", str(outcome)
+                record_usage(run, prepared.ai, outcome.usage)
+                job.failed += 1
+            elif isinstance(outcome, Exception):
+                logger.error("Unexpected error during AI extraction", exc_info=outcome)
+                run.status, run.error = "failed", "Unexpected server error while processing this study"
+                job.failed += 1
+            elif isinstance(outcome, BaseException):
+                raise outcome
+            else:
+                run.status = "succeeded"
+                record_usage(run, prepared.ai, outcome.usage)
+                store_extraction(run, study, context, prepared.fields, outcome.value)
+        job.processed += len(chunk)
+        db.commit()
+
+    record_event(
+        db,
+        project_id=access.project.id,
+        actor_id=access.user.id,
+        action="ai.extraction",
+        entity_type="ai_job",
+        entity_id=job.id,
+        details={
+            "provider": prepared.ai.provider.id,
+            "model": prepared.ai.model,
+            "prompt_version": EXTRACTION_PROMPT.id,
+            "key_source": prepared.ai.key_source,
+            "study_ids": [study.id for study in studies],
             "failed": job.failed,
         },
     )
@@ -314,7 +529,7 @@ def _job_access(db: Session, job: models.AIJob) -> ProjectAccess:
 async def run_job(job_id: int) -> str:
     """Run a queued job to the end and return its final status: "completed" or "failed".
 
-    A completed job can still have failed records; their errors are stored on each record's AI run.
+    A completed job can still have failed items; their errors are stored on each item's AI run.
     """
     with SessionLocal() as db:
         job = db.get(models.AIJob, job_id)
@@ -349,6 +564,11 @@ async def run_job(job_id: int) -> str:
                 ]
                 job.total = len(records)
                 await retrieve_full_texts(db, access, job, records)
+            elif job.task == "extraction":
+                require_stage_open(db, job.project_id, "extraction")
+                # For extraction jobs, record_ids holds study ids.
+                studies = load_studies(db, job.project_id, job.record_ids)
+                await process_studies(db, access, job, prepare_extraction(db, access, studies), studies)
             else:
                 require_stage_open(db, job.project_id, TASK_STAGES[job.task])
                 records = load_records(db, job.project_id, job.record_ids)

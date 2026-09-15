@@ -15,9 +15,11 @@ from audit import record_event
 from database import get_db
 from dedup import candidate_pairs, find_duplicates, reviewed_pairs
 from permissions import Permission
+from prisma_flow import flow_counts, legacy_counts, to_csv, to_svg
 from projects_routes import ProjectAccess, get_in_project, project_access
 from rate_limiting import ai_rate_limit
-from review_data import TITLE_ABSTRACT, final_decision, latest_run
+from review_data import FULL_TEXT, SCREENING_STAGES, TITLE_ABSTRACT, ReviewPolicy, latest_run
+from review_settings import load_settings
 from search_sources import CONNECTORS, MAX_RESULTS, catalog, connector_for, import_only_source
 from services.errors import SearchError
 from services.record_import import ImportFormatError, parse_records
@@ -55,6 +57,7 @@ def with_record_details(query: Select) -> Select:
     return query.options(
         selectinload(models.Record.search_run),
         selectinload(models.Record.decisions),
+        selectinload(models.Record.adjudications),
         selectinload(models.Record.ai_runs).selectinload(models.AIRun.screening),
         selectinload(models.Record.ai_runs).selectinload(models.AIRun.appraisal),
         selectinload(models.Record.ai_runs)
@@ -73,14 +76,61 @@ def _run_meta(run: models.AIRun) -> dict:
     }
 
 
-def record_out(record: models.Record, user_id: int) -> dict:
+def _suggestion_out(run: models.AIRun | None) -> dict | None:
+    if run is None:
+        return None
+    suggestion = run.screening
+    return {
+        **_run_meta(run),
+        "decision": suggestion.decision if suggestion else None,
+        "reasoning": suggestion.reasoning if suggestion else None,
+        "supporting_quote": suggestion.supporting_quote if suggestion else None,
+        "quote_verified": suggestion.quote_verified if suggestion else None,
+        "confidence": suggestion.confidence if suggestion else None,
+        "criteria_judgments": suggestion.criteria_judgments if suggestion else [],
+        "document_id": suggestion.document_id if suggestion else None,
+        "supporting_span_id": suggestion.supporting_span_id if suggestion else None,
+    }
+
+
+def screening_view(record: models.Record, user_id: int, policy: ReviewPolicy, blind: bool) -> dict[str, dict]:
+    """Each screening stage's state for this reviewer. With blinded dual screening, the state, final decision, and AI
+    suggestion stay hidden until the reviewer records their own decision."""
+    view = {}
+    for stage in SCREENING_STAGES:
+        mine = next((d for d in record.decisions if d.stage == stage and d.reviewer_id == user_id), None)
+        status = policy.status(record, stage)
+        hidden = (
+            blind
+            and policy.reviewers(stage) > 1
+            and (mine is None or mine.decision == "undecided")
+            and status.state != "adjudicated"
+        )
+        view[stage] = {
+            "state": "hidden" if hidden else status.state,
+            "final_decision": None if hidden else status.final,
+            "reason_code": None if hidden else status.reason_code,
+            "my_decision": mine.decision if mine else None,
+            "my_reason_code": mine.reason_code if mine else None,
+            "my_note": mine.note if mine else None,
+            "reviewers_decided": status.reviewers_decided,
+            "reviewers_required": policy.reviewers(stage),
+        }
+    return view
+
+
+def record_out(record: models.Record, user_id: int, policy: ReviewPolicy | None = None, blind: bool = False) -> dict:
     screening = latest_run(record, "screening")
     extraction = latest_run(record, "extraction")
     appraisal = latest_run(record, "appraisal")
-    my_decision = next(
-        (d.decision for d in record.decisions if d.stage == TITLE_ABSTRACT and d.reviewer_id == user_id), None
-    )
+    view = screening_view(record, user_id, policy or ReviewPolicy(), blind)
+    title_abstract, full_text = view[TITLE_ABSTRACT], view[FULL_TEXT]
     return {
+        "screening": view,
+        "ai_screening_hidden": title_abstract["state"] == "hidden" and screening is not None,
+        "ai_full_text_screening": None
+        if full_text["state"] == "hidden"
+        else _suggestion_out(latest_run(record, "fulltext_screening")),
         "id": record.id,
         "title": record.title,
         "authors": record.authors,
@@ -92,16 +142,9 @@ def record_out(record: models.Record, user_id: int) -> dict:
         "url": record.url,
         "source": record.search_run.source_label,
         "duplicate_of_id": record.duplicate_of_id,
-        "ai_screening": screening
-        and {
-            **_run_meta(screening),
-            "decision": screening.screening.decision if screening.screening else None,
-            "reasoning": screening.screening.reasoning if screening.screening else None,
-            "supporting_quote": screening.screening.supporting_quote if screening.screening else None,
-            "quote_verified": screening.screening.quote_verified if screening.screening else None,
-        },
-        "my_decision": my_decision,
-        "final_decision": final_decision(record),
+        "ai_screening": None if title_abstract["state"] == "hidden" else _suggestion_out(screening),
+        "my_decision": title_abstract["my_decision"],
+        "final_decision": title_abstract["final_decision"],
         "extraction": extraction
         and {
             **_run_meta(extraction),
@@ -349,7 +392,10 @@ def list_records(
     query = select(models.Record).where(models.Record.project_id == access.project.id).order_by(models.Record.id)
     if not include_duplicates:
         query = query.where(models.Record.duplicate_of_id.is_(None))
-    return [record_out(record, access.user.id) for record in db.scalars(with_record_details(query))]
+    settings = load_settings(db, access.project.id)
+    policy = ReviewPolicy(settings.screening.title_abstract_reviewers, settings.screening.full_text_reviewers)
+    blind = settings.screening.blind_dual_screening
+    return [record_out(record, access.user.id, policy, blind) for record in db.scalars(with_record_details(query))]
 
 
 @router.delete("/records", status_code=status.HTTP_204_NO_CONTENT)
@@ -413,49 +459,39 @@ def deduplicate_records(
 def prisma_counts(
     access: ProjectAccess = Depends(project_access(Permission.VIEW_PROJECT)), db: Session = Depends(get_db)
 ):
-    """PRISMA 2020 identification and screening counts, computed only from stored runs, records, and decisions."""
-    runs = db.scalars(select(models.SearchRun).where(models.SearchRun.project_id == access.project.id)).all()
-    records = db.scalars(
-        select(models.Record)
-        .where(models.Record.project_id == access.project.id)
-        .options(selectinload(models.Record.decisions))
-    ).all()
-    unique_records = [record for record in records if record.duplicate_of_id is None]
-    decisions = [final_decision(record) for record in unique_records]
-    sought = {record.id for record, decision in zip(unique_records, decisions, strict=True) if decision == "include"}
-    retrieved = set(
-        db.scalars(
-            select(models.Document.record_id).where(
-                models.Document.project_id == access.project.id, models.Document.role == "full_text"
-            )
-        )
+    """PRISMA 2020 counts, computed only from stored runs, records, decisions, documents, and studies."""
+    return legacy_counts(flow_counts(db, access.project.id))
+
+
+@router.get("/prisma/flow")
+def prisma_flow(
+    access: ProjectAccess = Depends(project_access(Permission.VIEW_PROJECT)), db: Session = Depends(get_db)
+):
+    """The PRISMA 2020 flow diagram's counts, with databases and registers and other methods in separate columns."""
+    return flow_counts(db, access.project.id)
+
+
+@router.get("/prisma/flow.svg")
+def prisma_flow_svg(
+    access: ProjectAccess = Depends(project_access(Permission.VIEW_PROJECT)), db: Session = Depends(get_db)
+):
+    return Response(
+        to_svg(flow_counts(db, access.project.id)),
+        media_type="image/svg+xml",
+        headers={"Content-Disposition": 'attachment; filename="prisma-2020-flow.svg"'},
     )
 
-    def identified(*kinds: str) -> int:
-        return sum(run.result_count for run in runs if run.kind in kinds)
 
-    by_source: dict[str, int] = {}
-    for run in runs:
-        by_source[run.source_label] = by_source.get(run.source_label, 0) + run.result_count
-
-    return {
-        "identified_from_databases": identified("database"),
-        "identified_from_registers": identified("register"),
-        "identified_from_other_methods": identified("other", "citation"),
-        "identified_from_uploads": identified("import"),
-        "other_methods": {
-            "citation_searching": identified("citation"),
-            "grey_literature_and_websites": identified("other"),
-        },
-        "by_source": by_source,
-        "duplicates_removed": len(records) - len(unique_records),
-        "screened": len(unique_records),
-        "excluded": decisions.count("exclude"),
-        "included": decisions.count("include"),
-        "awaiting_decision": sum(1 for decision in decisions if decision in (None, "undecided")),
-        "reports_sought_for_retrieval": len(sought),
-        "reports_not_retrieved": len(sought - retrieved),
-    }
+@router.get("/prisma/flow.csv")
+def prisma_flow_csv(
+    access: ProjectAccess = Depends(project_access(Permission.VIEW_PROJECT)), db: Session = Depends(get_db)
+):
+    """The counts in the layout of the PRISMA2020 R package's data template, for its flow diagram tool."""
+    return Response(
+        to_csv(flow_counts(db, access.project.id)),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="prisma-2020-flow.csv"'},
+    )
 
 
 class DuplicateUpdate(BaseModel):

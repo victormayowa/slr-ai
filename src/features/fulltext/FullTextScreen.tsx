@@ -14,6 +14,7 @@ import {
 import { jobProblem, jobProgress, waitForJob, type AiJob } from '../../api/jobs';
 import { useAuth } from '../../auth/authContext';
 import { useWorkspace } from '../project/workspaceContext';
+import { PassageViewer } from './PassageViewer';
 
 const panel = { background: 'rgba(0,0,0,0.25)', borderRadius: '12px', padding: '16px 20px' } as const;
 const muted = { color: 'var(--text-secondary)', fontSize: '0.85rem' } as const;
@@ -30,40 +31,6 @@ function retrievalSummary(retrieval: RetrievalInfo): string {
   const when = retrieval.created_at.slice(0, 10);
   const steps = retrieval.attempts.map(attempt => `${ORIGIN_LABELS[attempt.source] ?? attempt.source}: ${attempt.detail}`);
   return `Last search ${when}${retrieval.requested_by ? ` by ${retrieval.requested_by}` : ''}. ${steps.join('; ')}`;
-}
-
-function PassageViewer({ doc, onClose }: { doc: DocumentDetail; onClose: () => void }) {
-  return (
-    <div style={{ ...panel, marginTop: '20px' }} aria-label={`Passages of ${doc.file_name}`} role="region">
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
-        <h4 style={{ margin: 0 }}>{doc.file_name}</h4>
-        <button className="btn-secondary" style={smallButton} onClick={onClose}>Close</button>
-      </div>
-      <p style={muted}>
-        {doc.spans.length} passages · read with {doc.parser || 'no parser'}{doc.page_count ? ` · ${doc.page_count} pages` : ''}. AI evidence will point to these passages.
-      </p>
-      <div style={{ maxHeight: '480px', overflowY: 'auto', paddingRight: '8px' }}>
-        {doc.spans.map(span => {
-          const where = span.page ? `p. ${span.page}` : '';
-          if (span.kind === 'title') return <h4 key={span.id}>{span.text}</h4>;
-          if (span.kind === 'heading') return <h5 key={span.id} style={{ margin: '16px 0 4px' }}>{span.text} <span style={muted}>{where}</span></h5>;
-          if (span.kind === 'table') {
-            return (
-              <div key={span.id} style={{ overflowX: 'auto' }}>
-                <pre style={{ fontSize: '0.8rem', whiteSpace: 'pre', margin: '8px 0' }}>{span.label ? `${span.label}\n` : ''}{span.text}</pre>
-              </div>
-            );
-          }
-          return (
-            <p key={span.id} style={{ margin: '6px 0', fontSize: span.kind === 'reference' ? '0.8rem' : '0.9rem', fontStyle: span.kind === 'caption' ? 'italic' : 'normal' }}>
-              {span.label && <strong>{span.label}. </strong>}
-              {span.text} {where && <span style={muted}>({where})</span>}
-            </p>
-          );
-        })}
-      </div>
-    </div>
-  );
 }
 
 export function FullTextScreen() {
@@ -215,11 +182,11 @@ export function FullTextScreen() {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                <button className="btn-secondary" style={smallButton} disabled={busy !== null} onClick={() => retrieveOne(row)}>
+                <button className="btn-glass" style={smallButton} disabled={busy !== null} onClick={() => retrieveOne(row)}>
                   {busy === `retrieve-${row.record.id}` ? 'Searching…' : 'Find open-access copy'}
                 </button>
                 {(['full_text', 'supplement'] as const).map(role => (
-                  <label key={role} className="btn-secondary" style={{ ...smallButton, cursor: busy ? 'not-allowed' : 'pointer' }}>
+                  <label key={role} className="btn-glass" style={{ ...smallButton, cursor: busy ? 'not-allowed' : 'pointer' }}>
                     {role === 'full_text' ? 'Upload full text' : 'Upload supplement'}
                     <input
                       type="file"
@@ -252,10 +219,10 @@ export function FullTextScreen() {
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                      {doc.parse_status === 'parsed' && <button className="btn-secondary" style={smallButton} disabled={busy !== null} onClick={() => view(doc)}>View passages</button>}
-                      <button className="btn-secondary" style={smallButton} onClick={() => download(doc)}>Download</button>
-                      {doc.parse_status !== 'parsed' && <button className="btn-secondary" style={smallButton} disabled={busy !== null} onClick={() => reparse(doc)}>Read again</button>}
-                      <button className="btn-secondary" style={smallButton} disabled={busy !== null} onClick={() => remove(doc)}>Delete</button>
+                      {doc.parse_status === 'parsed' && <button className="btn-glass" style={smallButton} disabled={busy !== null} onClick={() => view(doc)}>View passages</button>}
+                      <button className="btn-glass" style={smallButton} onClick={() => download(doc)}>Download</button>
+                      {doc.parse_status !== 'parsed' && <button className="btn-glass" style={smallButton} disabled={busy !== null} onClick={() => reparse(doc)}>Read again</button>}
+                      <button className="btn-glass" style={smallButton} disabled={busy !== null} onClick={() => remove(doc)}>Delete</button>
                     </div>
                   </li>
                 ))}
@@ -266,10 +233,10 @@ export function FullTextScreen() {
         ))}
       </div>
 
-      {openDocument && <PassageViewer doc={openDocument} onClose={() => setOpenDocument(null)} />}
+      {openDocument && <PassageViewer doc={openDocument} onClose={() => setOpenDocument(null)} showEntities />}
 
       <div style={{ textAlign: 'right', marginTop: '24px' }}>
-        <button className="btn-primary" onClick={() => goTo('extraction-fields')}>Proceed to Extraction Rules →</button>
+        <button className="btn-primary" onClick={() => goTo('full-text-screening')}>Proceed to Full-Text Screening →</button>
       </div>
     </section>
   );

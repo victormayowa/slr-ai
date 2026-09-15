@@ -29,7 +29,7 @@ from permissions import Permission
 from projects_routes import ProjectAccess, get_in_project, project_access
 from rate_limiting import ai_rate_limit
 from records_routes import record_brief
-from review_data import final_decision
+from review_settings import review_policy
 from security import MAX_DOCUMENT_BYTES
 from storage import StorageError, document_storage
 
@@ -122,6 +122,7 @@ def list_full_texts(
 ):
     """Included records and any other records with documents, each with its documents and latest retrieval."""
     project_id = access.project.id
+    policy = review_policy(db, project_id)
     documents: dict[int, list[models.Document]] = defaultdict(list)
     for document in db.scalars(
         select(models.Document)
@@ -150,7 +151,7 @@ def list_full_texts(
 
     rows, sought, retrieved = [], 0, 0
     for record in _unique_records(db, project_id):
-        decision = final_decision(record)
+        decision = policy.final(record)
         record_documents = documents.get(record.id, [])
         if decision != "include" and not record_documents:
             continue
@@ -253,7 +254,8 @@ async def start_retrieval_job(
     require_documents_open(db, access.project.id)
     records = _unique_records(db, access.project.id)
     if body.record_ids is None:
-        included = [record for record in records if final_decision(record) == "include"]
+        policy = review_policy(db, access.project.id)
+        included = [record for record in records if policy.final(record) == "include"]
         if not included:
             raise HTTPException(status_code=400, detail="Include records at screening first")
         with_full_text = set(

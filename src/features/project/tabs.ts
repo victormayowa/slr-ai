@@ -12,11 +12,13 @@ export const PROJECT_TABS = [
   { path: 'deduplication', label: '10. Deduplication' },
   { path: 'screening', label: '11. Abstract Screening' },
   { path: 'full-texts', label: '12. Full Texts' },
-  { path: 'extraction-fields', label: '13. Extraction Rules' },
-  { path: 'extraction', label: '14. Full-Text Screening & Extract' },
-  { path: 'prisma', label: '15. PRISMA & Export' },
-  { path: 'risk-of-bias', label: '16. Risk of Bias & Quality' },
-  { path: 'synthesis', label: '17. Narrative Synthesis' },
+  { path: 'full-text-screening', label: '13. Full-Text Screening' },
+  { path: 'studies', label: '14. Studies & Reports' },
+  { path: 'extraction-fields', label: '15. Extraction Form' },
+  { path: 'extraction', label: '16. Data Extraction' },
+  { path: 'prisma', label: '17. PRISMA Flow Diagram' },
+  { path: 'risk-of-bias', label: '18. Risk of Bias & Quality' },
+  { path: 'synthesis', label: '19. Narrative Synthesis' },
 ] as const;
 
 export type ProjectTab = (typeof PROJECT_TABS)[number]['path'];

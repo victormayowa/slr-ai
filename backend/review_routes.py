@@ -461,6 +461,12 @@ def replace_extraction_fields(
     names = _clean_field_names(body.names)
     before = [field.name for field in project.extraction_fields]
     removed = [name for name in before if name not in names]
+    removed_ids = [field.id for field in project.extraction_fields if field.name in removed]
+    has_data = removed_ids and db.scalar(
+        select(models.ExtractionValue.id).where(models.ExtractionValue.field_id.in_(removed_ids)).limit(1)
+    )
+    if has_data:
+        raise HTTPException(status_code=409, detail="Fields that already have extracted values can't be removed")
 
     project.extraction_fields = [field for field in project.extraction_fields if field.name in names]
     _add_extraction_fields(project, names)

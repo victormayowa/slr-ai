@@ -32,6 +32,12 @@ export type PrismaCounts = {
   awaiting_decision: number;
   reports_sought_for_retrieval?: number;
   reports_not_retrieved?: number;
+  excluded_by_automation?: number;
+  reports_assessed?: number;
+  reports_excluded?: Record<string, number>;
+  awaiting_full_text_decision?: number;
+  studies_included?: number;
+  reports_of_included_studies?: number;
 };
 
 export type WorkflowRequirement = { label: string; met: boolean };
