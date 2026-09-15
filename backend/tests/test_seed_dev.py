@@ -73,6 +73,8 @@ def test_demo_project_opens_at_screening_with_the_duplicate_set_aside(client, lo
         "not_started",
         "not_started",
         "not_started",
+        "not_started",
+        "not_started",
     ]
     assert (prisma["duplicates_removed"], prisma["screened"], prisma["included"], prisma["excluded"]) == (1, 7, 2, 1)
 

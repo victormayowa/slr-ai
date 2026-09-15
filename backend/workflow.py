@@ -28,7 +28,18 @@ from review_settings import review_policy
 from search_quality import press_status
 from studies import ensure_studies
 
-STAGES = ["protocol", "search", "screening", "full_text_screening", "extraction", "appraisal", "synthesis", "certainty"]
+STAGES = [
+    "protocol",
+    "search",
+    "screening",
+    "full_text_screening",
+    "extraction",
+    "appraisal",
+    "synthesis",
+    "certainty",
+    "manuscript",
+    "submission",
+]
 
 STAGE_LABELS = {
     "protocol": "Protocol",
@@ -39,6 +50,8 @@ STAGE_LABELS = {
     "appraisal": "Risk of bias assessment",
     "synthesis": "Synthesis",
     "certainty": "Certainty of evidence (GRADE)",
+    "manuscript": "Manuscript",
+    "submission": "Submission and deposit",
 }
 
 # Who may complete or reopen each stage.
@@ -51,6 +64,8 @@ STAGE_PERMISSIONS = {
     "appraisal": Permission.MANAGE_WORKFLOW,
     "synthesis": Permission.APPROVE_ANALYSIS,
     "certainty": Permission.APPROVE_CERTAINTY,
+    "manuscript": Permission.MANAGE_WORKFLOW,
+    "submission": Permission.MANAGE_WORKFLOW,
 }
 
 PROTOCOL_FIELDS = (
@@ -384,7 +399,7 @@ def _snapshot_content(db: Session, project: models.Project, stage: str) -> dict[
     raise WorkflowError(f"No snapshot is defined for {stage}", status_code=500)
 
 
-EVIDENCE_STAGES = ("appraisal", "synthesis", "certainty")
+EVIDENCE_STAGES = ("appraisal", "synthesis", "certainty", "manuscript", "submission")
 
 
 def _final_run(analysis: models.Analysis) -> models.AnalysisRun | None:
@@ -398,6 +413,15 @@ def _project_rows[ModelT: models.Base](db: Session, model: type[ModelT], project
 
 
 def _evidence_requirements(db: Session, project: models.Project, stage: str) -> list[Requirement]:
+    # These modules depend on this one, so they're imported when needed.
+    if stage == "manuscript":
+        from manuscript_state import manuscript_requirements
+
+        return [Requirement(label, met) for label, met in manuscript_requirements(db, project)]
+    if stage == "submission":
+        from publication_state import submission_requirements
+
+        return [Requirement(label, met) for label, met in submission_requirements(db, project)]
     if stage == "appraisal":
         studies = included_studies(db, project.id)
         assessments = _project_rows(db, models.AppraisalAssessment, project.id)
@@ -456,6 +480,14 @@ def _evidence_requirements(db: Session, project: models.Project, stage: str) -> 
 
 
 def _evidence_snapshot(db: Session, project: models.Project, stage: str) -> dict[str, Any]:
+    if stage == "manuscript":
+        from manuscript_state import manuscript_snapshot
+
+        return manuscript_snapshot(db, project)
+    if stage == "submission":
+        from publication_state import submission_snapshot
+
+        return submission_snapshot(db, project)
     if stage == "appraisal":
         return {
             "assessments": [

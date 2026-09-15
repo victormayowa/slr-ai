@@ -2,7 +2,7 @@
 
 An AI-assisted platform for systematic reviews and meta-analyses, built around human decisions: the AI suggests, reviewers decide, and every number should trace back to recorded data.
 
-> **Status:** in development, not yet released. Protocol through search, screening, full texts, extraction, risk of bias, statistical synthesis in R, and GRADE certainty are built (roadmap W0–W11); manuscript drafting, publication, living reviews, and billing are not. See [docs/roadmap.md](docs/roadmap.md) for the full build plan.
+> **Status:** in development, not yet released. The review workflow is built end to end (roadmap W0–W14): protocol, search, screening, full texts, extraction, risk of bias, statistical synthesis in R, GRADE certainty, a manuscript whose every sentence is verified against the evidence, submission packages and repository deposits, peer review responses, and living reviews with surveillance and versioned releases. Governance reports, the public API, billing, and production hardening are not built yet. See [docs/roadmap.md](docs/roadmap.md) for the full build plan.
 
 ## Stack
 
@@ -55,10 +55,12 @@ uv sync
 uv run alembic upgrade head        # create or update the database schema
 uv run python -m scripts.seed_dev  # optional: demo accounts and projects
 uv run uvicorn main:app --reload
-uv run arq workers.ai_worker.WorkerSettings  # in a second terminal: runs AI, analysis, and embedding jobs
+uv run arq workers.ai_worker.WorkerSettings  # in a second terminal: runs AI, analysis, and embedding jobs, and hourly surveillance
 ```
 
 Statistical analyses need R. `./scripts/setup_r_env.sh` installs R and its packages into `~/.local/share/omnireview/r` without sudo (it downloads micromamba) and prints the `RSCRIPT_PATH` line to add to `backend/.env`.
+
+Manuscript export uses Pandoc (Word, LaTeX) and Tectonic (PDF, which downloads TeX packages on first use). `./scripts/setup_publishing_tools.sh` installs both, with rsvg-convert, into `~/.local/share/omnireview/tools` without sudo and prints the lines for `backend/.env`. Without Pandoc, Word export falls back to a simpler document.
 
 OmniReview requires PostgreSQL 16 with the pgvector extension in every environment; there is no SQLite fallback. The setup script expects PostgreSQL 16 to be installed already (`sudo apt install postgresql`) and asks for your sudo password.
 

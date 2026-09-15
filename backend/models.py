@@ -1470,3 +1470,492 @@ class InterpretationText(Base):
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+# --- Manuscript (W12) ---
+
+
+class Manuscript(Base):
+    """The review manuscript, drafted from the locked evidence base. Sections hold Markdown with evidence markers
+    ([#analysis:3]), citations ([@5]), and table or figure embeds ([[table:sof]]), so every claim stays traceable."""
+
+    __tablename__ = "manuscripts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), unique=True)
+    title: Mapped[str] = mapped_column(String(500))
+    # "vancouver", "apa", "ama", "harvard", or a style id from the CSL styles repository (for example "nature")
+    citation_style: Mapped[str] = mapped_column(String(100), default="vancouver")
+    keywords: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    # funding, competing_interests, data_availability, ethics, registration, acknowledgements
+    statements: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    # graphical_abstract, highlights, plain_language_summary
+    extras: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    # The certainty stage snapshot (the locked evidence base) the manuscript was started from.
+    evidence_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("stage_snapshots.id", ondelete="SET NULL"))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    sections: Mapped[list["ManuscriptSection"]] = relationship(
+        cascade="all, delete-orphan", order_by="ManuscriptSection.position", passive_deletes=True
+    )
+    authors: Mapped[list["ManuscriptAuthor"]] = relationship(
+        cascade="all, delete-orphan", order_by="ManuscriptAuthor.position", passive_deletes=True
+    )
+    versions: Mapped[list["ManuscriptVersion"]] = relationship(
+        cascade="all, delete-orphan", order_by="ManuscriptVersion.number", passive_deletes=True
+    )
+
+
+class ManuscriptSection(Base):
+    __tablename__ = "manuscript_sections"
+    __table_args__ = (UniqueConstraint("manuscript_id", "key", name="uq_manuscript_section"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    manuscript_id: Mapped[int] = mapped_column(ForeignKey("manuscripts.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(String(200))
+    position: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text, default="", server_default="")
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ManuscriptRevision(Base):
+    """Every saved change to a section, for tracked changes and diffs."""
+
+    __tablename__ = "manuscript_revisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    section_id: Mapped[int] = mapped_column(ForeignKey("manuscript_sections.id", ondelete="CASCADE"), index=True)
+    content: Mapped[str] = mapped_column(Text)
+    # "manual", "generated", "ai_accepted", or "restored"
+    source: Mapped[str] = mapped_column(String(20))
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    suggestion_id: Mapped[int | None] = mapped_column(Integer)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    created_by: Mapped[User | None] = relationship()
+
+
+class ManuscriptSuggestion(Base):
+    """A proposed replacement for a section (an AI draft, a language edit, or regenerated text), never applied until a
+    reviewer accepts it. Its verification report is kept with it."""
+
+    __tablename__ = "manuscript_suggestions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    section_id: Mapped[int] = mapped_column(ForeignKey("manuscript_sections.id", ondelete="CASCADE"), index=True)
+    # "draft", "generated", "academic_tone", "grammar", "journal_style", "plain_language"
+    kind: Mapped[str] = mapped_column(String(30))
+    instruction: Mapped[str] = mapped_column(Text, default="", server_default="")
+    original: Mapped[str] = mapped_column(Text, default="", server_default="")
+    content: Mapped[str] = mapped_column(Text)
+    problems: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    ai_run_id: Mapped[int | None] = mapped_column(ForeignKey("ai_runs.id", ondelete="SET NULL"))
+    # "pending", "accepted", or "rejected"
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    decided_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ClaimAcknowledgement(Base):
+    """A reviewer's acknowledgement that a sentence needs no linked evidence, or that its numbers are right."""
+
+    __tablename__ = "claim_acknowledgements"
+    __table_args__ = (UniqueConstraint("section_id", "sentence_hash", name="uq_claim_acknowledgement"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    section_id: Mapped[int] = mapped_column(ForeignKey("manuscript_sections.id", ondelete="CASCADE"), index=True)
+    sentence_hash: Mapped[str] = mapped_column(String(64))
+    sentence: Mapped[str] = mapped_column(Text)
+    note: Mapped[str] = mapped_column(Text)
+    acknowledged_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManuscriptReference(Base):
+    """A cited work, as CSL-JSON, with DOI and metadata verification and retraction checks."""
+
+    __tablename__ = "manuscript_references"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    record_id: Mapped[int | None] = mapped_column(ForeignKey("records.id", ondelete="SET NULL"))
+    csl: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    doi: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    pmid: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    # "unchecked", "verified", "mismatch", "not_found", or "error"
+    verification_status: Mapped[str] = mapped_column(String(20), default="unchecked")
+    verification: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    retracted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    retraction: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManuscriptAuthor(Base):
+    __tablename__ = "manuscript_authors"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    manuscript_id: Mapped[int] = mapped_column(ForeignKey("manuscripts.id", ondelete="CASCADE"), index=True)
+    # Authors who approve the manuscript in OmniReview have an account on the project.
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    name: Mapped[str] = mapped_column(String(300))
+    email: Mapped[str] = mapped_column(String(320), default="", server_default="")
+    affiliation: Mapped[str] = mapped_column(Text, default="", server_default="")
+    orcid: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    position: Mapped[int] = mapped_column(Integer)
+    corresponding: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # CRediT contributor roles
+    credit_roles: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    competing_interests: Mapped[str] = mapped_column(Text, default="", server_default="")
+
+
+class ManuscriptVersion(Base):
+    """A frozen copy of the manuscript that authors approve; export needs every author's approval of the current one."""
+
+    __tablename__ = "manuscript_versions"
+    __table_args__ = (UniqueConstraint("manuscript_id", "number", name="uq_manuscript_version"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    manuscript_id: Mapped[int] = mapped_column(ForeignKey("manuscripts.id", ondelete="CASCADE"), index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    content: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    sha256: Mapped[str] = mapped_column(String(64))
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    approvals: Mapped[list["AuthorApproval"]] = relationship(cascade="all, delete-orphan", passive_deletes=True)
+
+
+class AuthorApproval(Base):
+    __tablename__ = "author_approvals"
+    __table_args__ = (UniqueConstraint("version_id", "author_id", name="uq_author_approval"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version_id: Mapped[int] = mapped_column(ForeignKey("manuscript_versions.id", ondelete="CASCADE"), index=True)
+    author_id: Mapped[int] = mapped_column(ForeignKey("manuscript_authors.id", ondelete="CASCADE"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManuscriptChecklistItem(Base):
+    """A reviewer's status and location for a reporting checklist item, overriding the automatic assessment."""
+
+    __tablename__ = "manuscript_checklist_items"
+    __table_args__ = (UniqueConstraint("manuscript_id", "checklist", "item_id", name="uq_manuscript_checklist_item"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    manuscript_id: Mapped[int] = mapped_column(ForeignKey("manuscripts.id", ondelete="CASCADE"), index=True)
+    checklist: Mapped[str] = mapped_column(String(40))
+    item_id: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    location: Mapped[str] = mapped_column(Text, default="", server_default="")
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+# --- Publication (W13) ---
+
+
+class JournalCandidate(Base):
+    """A journal suggested for the manuscript, with open access, indexing, and metrics, and heuristic warnings."""
+
+    __tablename__ = "journal_candidates"
+    __table_args__ = (UniqueConstraint("project_id", "openalex_id", name="uq_journal_candidate"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    openalex_id: Mapped[str] = mapped_column(String(40))
+    name: Mapped[str] = mapped_column(String(500))
+    issns: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    publisher: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    homepage: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    is_oa: Mapped[bool | None] = mapped_column(Boolean)
+    in_doaj: Mapped[bool | None] = mapped_column(Boolean)
+    apc_usd: Mapped[int | None] = mapped_column(Integer)
+    h_index: Mapped[int | None] = mapped_column(Integer)
+    mean_citedness: Mapped[float | None] = mapped_column(Float)
+    works_count: Mapped[int | None] = mapped_column(Integer)
+    medline_indexed: Mapped[bool | None] = mapped_column(Boolean)
+    topic_works: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    included_study_reports: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    score: Mapped[float] = mapped_column(Float, default=0)
+    reasons: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    warnings: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    shortlisted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class JournalGuideline(Base):
+    """A journal's author guidelines and the structured requirements read from them, each backed by a quote."""
+
+    __tablename__ = "journal_guidelines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    journal_name: Mapped[str] = mapped_column(String(500))
+    source_url: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    file_name: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    content: Mapped[str] = mapped_column(Text)
+    requirements: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    ai_run_id: Mapped[int | None] = mapped_column(ForeignKey("ai_runs.id", ondelete="SET NULL"))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SubmissionPackage(Base):
+    """Everything a journal submission needs, built from an approved manuscript version and checked for readiness.
+    OmniReview never submits: the corresponding author confirms the package and submits it on the journal's system."""
+
+    __tablename__ = "submission_packages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    manuscript_version_id: Mapped[int | None] = mapped_column(ForeignKey("manuscript_versions.id", ondelete="SET NULL"))
+    guideline_id: Mapped[int | None] = mapped_column(ForeignKey("journal_guidelines.id", ondelete="SET NULL"))
+    journal_name: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    cover_letter: Mapped[str] = mapped_column(Text, default="", server_default="")
+    cover_letter_ai_run_id: Mapped[int | None] = mapped_column(ForeignKey("ai_runs.id", ondelete="SET NULL"))
+    highlights: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    storage_key: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    sha256: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    files: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    readiness: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    # "draft", "built", or "confirmed"
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    confirmed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class RepositoryDeposit(Base):
+    """Review materials deposited in a repository (Zenodo, OSF, Figshare, GitHub, GitLab) or packaged for one without an
+    API (Dryad, medRxiv). Access tokens are used per request and never stored."""
+
+    __tablename__ = "repository_deposits"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    target: Mapped[str] = mapped_column(String(20))
+    # "draft", "published", "packaged", or "failed"
+    status: Mapped[str] = mapped_column(String(20))
+    sandbox: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    external_id: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    concept_id: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    doi: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    url: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    storage_key: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    files: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    deposit_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    release_id: Mapped[int | None] = mapped_column(ForeignKey("review_releases.id", ondelete="SET NULL"))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ReviewRound(Base):
+    """One round of peer review: the reviewers' comments, point-by-point responses, and the response letter."""
+
+    __tablename__ = "review_rounds"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    journal: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    round_number: Mapped[int] = mapped_column(Integer)
+    decision: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    received_on: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    # The manuscript version reviewed, to show what changed since.
+    manuscript_version_id: Mapped[int | None] = mapped_column(ForeignKey("manuscript_versions.id", ondelete="SET NULL"))
+    response_letter: Mapped[str] = mapped_column(Text, default="", server_default="")
+    response_ai_run_id: Mapped[int | None] = mapped_column(ForeignKey("ai_runs.id", ondelete="SET NULL"))
+    # "open" or "responded"
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    comments: Mapped[list["ReviewerComment"]] = relationship(
+        cascade="all, delete-orphan", order_by="ReviewerComment.id", passive_deletes=True
+    )
+
+
+class ReviewerComment(Base):
+    __tablename__ = "reviewer_comments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    round_id: Mapped[int] = mapped_column(ForeignKey("review_rounds.id", ondelete="CASCADE"), index=True)
+    reviewer: Mapped[str] = mapped_column(String(100))
+    number: Mapped[str] = mapped_column(String(20))
+    body: Mapped[str] = mapped_column(Text)
+    # "major", "minor", "editorial", "methods", "statistics", or "other"
+    category: Mapped[str] = mapped_column(String(30), default="", server_default="")
+    response: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # "open", "addressed", or "rebutted"
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    # [{"section_key", "revision_id"}]: the manuscript changes made in response.
+    changes: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    # {"stage", "rationale", "reopened_at"} when the comment led to re-analysis.
+    reanalysis: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+# --- Living reviews (W14) ---
+
+
+class SurveillanceSchedule(Base):
+    """A saved search strategy rerun on a schedule to find new studies."""
+
+    __tablename__ = "surveillance_schedules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("search_strategies.id", ondelete="CASCADE"))
+    connector: Mapped[str] = mapped_column(String(40))
+    frequency_days: Mapped[int] = mapped_column(Integer)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    # min_new_records, min_predicted_relevant, relevance_threshold, large_trial_participants
+    thresholds: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    strategy: Mapped[SearchStrategy] = relationship()
+
+
+class SurveillanceRun(Base):
+    __tablename__ = "surveillance_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    schedule_id: Mapped[int | None] = mapped_column(
+        ForeignKey("surveillance_schedules.id", ondelete="CASCADE"), index=True
+    )
+    # "search", "retractions", or "feeds"
+    kind: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20))
+    query: Mapped[str] = mapped_column(Text, default="", server_default="")
+    database: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    retrieved: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    new_candidates: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    duplicates: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SurveillanceCandidate(Base):
+    """A record found by surveillance, kept apart from the review until a reviewer promotes it into a living update."""
+
+    __tablename__ = "surveillance_candidates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("surveillance_runs.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(Text)
+    authors: Mapped[str] = mapped_column(Text, default="", server_default="")
+    year: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    venue: Mapped[str] = mapped_column(Text, default="", server_default="")
+    doi: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    abstract: Mapped[str] = mapped_column(Text, default="", server_default="")
+    identifiers: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    url: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    external_id: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    relevance: Mapped[float | None] = mapped_column(Float)
+    sample_size: Mapped[int | None] = mapped_column(Integer)
+    ai_decision: Mapped[str | None] = mapped_column(String(20))
+    ai_reasoning: Mapped[str | None] = mapped_column(Text)
+    ai_run_id: Mapped[int | None] = mapped_column(ForeignKey("ai_runs.id", ondelete="SET NULL"))
+    # "pending", "promoted", "dismissed", or "imported"
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    decision_reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+    decided_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    record_id: Mapped[int | None] = mapped_column(ForeignKey("records.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class WatchFeed(Base):
+    """A guideline, regulatory, or journal RSS or Atom feed watched for new items."""
+
+    __tablename__ = "watch_feeds"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    label: Mapped[str] = mapped_column(String(300))
+    url: Mapped[str] = mapped_column(String(1000))
+    seen_ids: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SurveillanceAlert(Base):
+    __tablename__ = "surveillance_alerts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    # "new_records", "new_eligible", "large_trial", "retraction", or "feed_update"
+    kind: Mapped[str] = mapped_column(String(30))
+    title: Mapped[str] = mapped_column(String(500))
+    detail: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    # "open", "acknowledged", or "dismissed"
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    acknowledged_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ImpactAssessment(Base):
+    """A provisional re-analysis with candidate studies added, showing how results and certainty might change before
+    anyone commits to a living update. Never final."""
+
+    __tablename__ = "impact_assessments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    analysis_id: Mapped[int] = mapped_column(ForeignKey("analyses.id", ondelete="CASCADE"))
+    candidate_rows: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    baseline: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    provisional: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    shift: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    grade_changes: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    status: Mapped[str] = mapped_column(String(20))
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ReviewRelease(Base):
+    """A versioned release of the review: hashes of every stage snapshot, the approved manuscript, and final analyses,
+    with a changelog against the previous release."""
+
+    __tablename__ = "review_releases"
+    __table_args__ = (UniqueConstraint("project_id", "version", name="uq_review_release"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(300))
+    notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    changelog: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    content: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    sha256: Mapped[str] = mapped_column(String(64))
+    released_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

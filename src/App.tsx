@@ -3,6 +3,9 @@ import { useAuth } from './auth/authContext';
 import { RequireAuth } from './auth/RequireAuth';
 import { RiskOfBiasScreen } from './features/appraisal/RiskOfBiasScreen';
 import { CertaintyScreen } from './features/certainty/CertaintyScreen';
+import { LivingScreen } from './features/living/LivingScreen';
+import { ManuscriptScreen } from './features/manuscript/ManuscriptScreen';
+import { PublicationScreen } from './features/publication/PublicationScreen';
 import { ExtractionScreen } from './features/extraction/ExtractionScreen';
 import { FullTextScreen } from './features/fulltext/FullTextScreen';
 import { FullTextScreeningScreen } from './features/screening/FullTextScreeningScreen';
@@ -64,6 +67,9 @@ function App() {
           <Route path="risk-of-bias" element={<RiskOfBiasScreen />} />
           <Route path="synthesis" element={<SynthesisScreen />} />
           <Route path="certainty" element={<CertaintyScreen />} />
+          <Route path="manuscript" element={<ManuscriptScreen />} />
+          <Route path="publication" element={<PublicationScreen />} />
+          <Route path="living" element={<LivingScreen />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

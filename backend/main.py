@@ -24,11 +24,14 @@ from documents_routes import router as documents_router
 from entities_routes import router as entities_router
 from extraction_routes import router as extraction_router
 from jobs_routes import router as jobs_router
+from living_routes import router as living_router
+from manuscript_routes import router as manuscript_router
 from observability import RequestIdMiddleware, configure_logging, configure_sentry
 from other_sources_routes import router as other_sources_router
 from projects_routes import router as projects_router
 from protocol_design_routes import catalog_router as protocol_catalog_router
 from protocol_design_routes import router as protocol_design_router
+from publication_routes import router as publication_router
 from rate_limiting import ai_rate_limit
 from records_routes import router as records_router
 from registration_routes import router as registration_router
@@ -107,6 +110,9 @@ app.include_router(entities_router)
 app.include_router(appraisal_router)
 app.include_router(synthesis_router)
 app.include_router(certainty_router)
+app.include_router(manuscript_router)
+app.include_router(publication_router)
+app.include_router(living_router)
 
 
 @app.exception_handler(TaskNotReady)

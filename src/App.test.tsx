@@ -377,6 +377,63 @@ describe('App routing', () => {
     expect(screen.getByText(/⊕⊕⊕◯ Moderate/)).toBeTruthy();
   });
 
+  it('offers to start the manuscript once the evidence base is locked', async () => {
+    mockApi({ 'POST /api/auth/login': LOGIN, ...WORKSPACE_API, 'GET /api/projects/7/manuscript': null });
+    renderApp('/projects/7/manuscript');
+
+    signIn();
+
+    expect(await screen.findByRole('button', { name: 'Start the manuscript' })).toBeTruthy();
+  });
+
+  it('lists candidate journals with heuristic warnings', async () => {
+    const journal = {
+      id: 1, name: 'Journal of Aspirin Studies', issns: ['1234-5678'], publisher: 'Example Press', homepage: '', is_oa: true, in_doaj: false,
+      apc_usd: 2000, h_index: 12, medline_indexed: false, topic_works: 40, included_study_reports: 1, score: 9.1,
+      reasons: ['40 works on this topic in OpenAlex'], warnings: ['Not currently indexed in MEDLINE'], shortlisted: false,
+    };
+    mockApi({
+      'POST /api/auth/login': LOGIN,
+      ...WORKSPACE_API,
+      'GET /api/projects/7/journals': { candidates: [journal], note: 'Warnings are heuristic flags, not verdicts.' },
+      'GET /api/projects/7/journal-guidelines': { guidelines: [], requirement_names: [] },
+      'GET /api/projects/7/submission-packages': { packages: [], statements: {}, statement_labels: {} },
+      'GET /api/projects/7/deposits': [],
+      'GET /api/projects/7/peer-review/rounds': [],
+    });
+    renderApp('/projects/7/publication');
+
+    signIn();
+
+    expect(await screen.findByText('Journal of Aspirin Studies')).toBeTruthy();
+    expect(screen.getByText('Not currently indexed in MEDLINE')).toBeTruthy();
+  });
+
+  it('shows surveillance alerts and the evidence map', async () => {
+    mockApi({
+      'POST /api/auth/login': LOGIN,
+      ...WORKSPACE_API,
+      'GET /api/projects/7/surveillance/schedules': { schedules: [], connectors: { pubmed: 'PubMed' }, default_thresholds: {} },
+      'GET /api/projects/7/surveillance/runs': [],
+      'GET /api/projects/7/surveillance/alerts': [{ id: 1, kind: 'retraction', title: 'Included study retracted: Aspirin trial A', detail: {}, status: 'open', note: '', created_at: '2026-09-15T00:00:00Z' }],
+      'GET /api/projects/7/surveillance/candidates': [],
+      'GET /api/projects/7/surveillance/feeds': [],
+      'GET /api/projects/7/releases': [],
+      'GET /api/projects/7/living/impact': [],
+      'GET /api/projects/7/living/evidence-map': {
+        interventions: ['Aspirin'], outcomes: ['Myocardial infarction'], bubbles: [{ intervention: 'Aspirin', outcome: 'Myocardial infarction', studies: 2, certainty: 'high' }],
+        fields: [], coverage: [], trends: { records_by_year: {}, included_by_year: {}, surveillance: [], releases: [] },
+      },
+      'GET /api/projects/7/analyses': { analyses: [], plan: {} },
+    });
+    renderApp('/projects/7/living');
+
+    signIn();
+
+    expect(await screen.findByText('Included study retracted: Aspirin trial A')).toBeTruthy();
+    expect(screen.getByTitle('2 studies, high certainty')).toBeTruthy();
+  });
+
   it('explains when a project cannot be opened', async () => {
     mockApi({ 'POST /api/auth/login': LOGIN });
     renderApp('/projects/7/setup');

@@ -20,6 +20,9 @@ export const PROJECT_TABS = [
   { path: 'risk-of-bias', label: '18. Risk of Bias & Quality' },
   { path: 'synthesis', label: '19. Statistical Synthesis' },
   { path: 'certainty', label: '20. Certainty & Interpretation' },
+  { path: 'manuscript', label: '21. Manuscript' },
+  { path: 'publication', label: '22. Submission & Publication' },
+  { path: 'living', label: '23. Living Review' },
 ] as const;
 
 export type ProjectTab = (typeof PROJECT_TABS)[number]['path'];

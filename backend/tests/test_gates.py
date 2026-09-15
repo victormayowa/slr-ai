@@ -34,7 +34,7 @@ def test_a_new_project_starts_with_only_the_protocol_open(client, project):
 
     stages = workflow(client, project_id, headers)
 
-    assert [info["status"] for info in stages.values()] == ["open"] + ["not_started"] * 7
+    assert [info["status"] for info in stages.values()] == ["open"] + ["not_started"] * 9
     unmet = [r["label"] for r in stages["protocol"]["requirements"] if not r["met"]]
     assert unmet == [
         "Study description written",
@@ -190,6 +190,6 @@ def test_tampered_snapshots_are_detected(client, project, fake_provider):
 def test_unknown_stages_are_not_found(client, project):
     project_id, headers = project
 
-    response = client.post(url(project_id, "workflow/manuscript/complete"), json={"note": "Done"}, headers=headers)
+    response = client.post(url(project_id, "workflow/publishing/complete"), json={"note": "Done"}, headers=headers)
 
     assert response.status_code == 404

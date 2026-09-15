@@ -10,6 +10,7 @@ import os
 from datetime import timedelta
 from typing import Any, ClassVar
 
+from arq import cron
 from sqlalchemy import select
 
 import models
@@ -25,6 +26,17 @@ logger = logging.getLogger(__name__)
 
 async def run_ai_job(ctx: dict[str, Any], job_id: int) -> str:
     return await run_job(job_id)
+
+
+async def run_due_surveillance(ctx: dict[str, Any]) -> None:
+    """Hourly: rerun due surveillance searches, and check watched feeds (daily) and retractions (weekly)."""
+    from surveillance import run_due
+
+    with SessionLocal() as db:
+        runs = run_due(db)
+        db.commit()
+    if runs:
+        logger.info("Ran %s surveillance checks", len(runs))
 
 
 async def fail_abandoned_jobs(ctx: dict[str, Any]) -> None:
@@ -47,6 +59,7 @@ async def fail_abandoned_jobs(ctx: dict[str, Any]) -> None:
 
 class WorkerSettings:
     functions: ClassVar[list[Any]] = [run_ai_job]
+    cron_jobs: ClassVar[list[Any]] = [cron(run_due_surveillance, minute={5})]
     on_startup = fail_abandoned_jobs
     queue_name = QUEUE_NAME
     redis_settings = redis_settings()

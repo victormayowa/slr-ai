@@ -324,3 +324,155 @@ outcome, and how certain the evidence is. Use only numbers that appear in the su
 the summary of findings.""",
 )
 PROMPTS[PLAIN_LANGUAGE_PROMPT.name] = PLAIN_LANGUAGE_PROMPT
+
+MANUSCRIPT_DRAFT_PROMPT = PromptTemplate(
+    "manuscript_draft",
+    1,
+    """You are drafting the $section section of a systematic review manuscript for the authors to review.
+$untrusted_text_note
+
+<guidance>
+$guidance
+</guidance>
+
+<review>
+$review
+</review>
+
+<evidence>
+$evidence
+</evidence>
+
+<references>
+$references
+</references>
+
+<current_text>
+$current
+</current_text>
+
+Write the section as blocks. A block is either a subsection heading or a paragraph of sentences. For every sentence,
+list the evidence keys (the bracketed keys in the evidence list, such as analysis:3) whose facts it relies on and the
+reference ids it cites. Use only facts in the evidence list, and copy numbers exactly as given (you may round to fewer
+decimal places). Cite only listed references. When the section needs a statement the evidence doesn't support (for
+example background for the introduction without references), write it in square brackets as a note to the authors,
+with no evidence keys. Don't add embed lines; the authors insert tables and figures.""",
+)
+
+LANGUAGE_EDIT_PROMPT = PromptTemplate(
+    "manuscript_language",
+    1,
+    """Edit the manuscript text below. Task: $task
+$untrusted_text_note
+
+<journal_style>
+$journal_style
+</journal_style>
+
+<text>
+$text
+</text>
+
+Keep every marker exactly as written and in the same sentence: evidence markers such as [#analysis:3], citations such
+as [@5], and embed lines such as [[table:sof]]. Keep every number exactly as written. Keep Markdown headings. Don't add
+claims. Return only the edited text.""",
+)
+
+MANUSCRIPT_EXTRAS_PROMPT = PromptTemplate(
+    "manuscript_extras",
+    1,
+    """$kind_instruction
+$untrusted_text_note
+
+<review>
+$review
+</review>
+
+<evidence>
+$evidence
+</evidence>
+
+Use only facts from the evidence, copy numbers exactly, and keep the GRADE wording of certainty ("probably", "may",
+"is very uncertain").""",
+)
+
+GUIDELINE_PROMPT = PromptTemplate(
+    "journal_guideline",
+    1,
+    """Read the author guidelines of $journal and list the requirements for a systematic review submission.
+$untrusted_text_note
+
+<guidelines>
+$guideline
+</guidelines>
+
+Report only requirements the guidelines state. For each, give its name from this list: $requirement_names; its value
+(numbers as digits, lists separated by commas); and a quote copied word for word from the guidelines that states it.
+Skip requirements the guidelines don't mention.""",
+)
+
+COVER_LETTER_PROMPT = PromptTemplate(
+    "cover_letter",
+    1,
+    """Draft a cover letter submitting a systematic review to $journal.
+$untrusted_text_note
+
+<review>
+$review
+</review>
+
+<findings>
+$findings
+</findings>
+
+<statements>
+$statements
+</statements>
+
+Address the editor, state what the review asked and found (only the findings above, with their certainty), why it
+suits the journal's readers, that it follows PRISMA 2020, and the statements given. Don't invent numbers, awards, or
+claims of novelty that the findings don't support. Keep it under 350 words, and end with placeholders for the
+corresponding author's name and signature.""",
+)
+
+REVIEW_COMMENTS_PROMPT = PromptTemplate(
+    "reviewer_comments",
+    1,
+    """Split the peer review report below into individual comments.
+$untrusted_text_note
+
+<report>
+$comments
+</report>
+
+For each comment give the reviewer (for example "Editor", "Reviewer 1"), its number as written or a sequence number,
+the comment text copied word for word from the report, and a category: major, minor, editorial, methods, statistics,
+or other. Don't summarize or reword comments.""",
+)
+
+RESPONSE_LETTER_PROMPT = PromptTemplate(
+    "response_letter",
+    1,
+    """Draft a point-by-point response to reviewers for a revised systematic review submitted to $journal.
+$untrusted_text_note
+
+<comments_and_responses>
+$comments
+</comments_and_responses>
+
+Thank the editor and reviewers briefly. Then, for every comment in order, quote the comment, give the authors' response
+as written (you may improve the wording without changing its substance), and list the changes made with their
+manuscript sections. Don't promise changes the authors didn't record. Where a response is missing, write
+"[Response needed]".""",
+)
+
+for _prompt in (
+    MANUSCRIPT_DRAFT_PROMPT,
+    LANGUAGE_EDIT_PROMPT,
+    MANUSCRIPT_EXTRAS_PROMPT,
+    GUIDELINE_PROMPT,
+    COVER_LETTER_PROMPT,
+    REVIEW_COMMENTS_PROMPT,
+    RESPONSE_LETTER_PROMPT,
+):
+    PROMPTS[_prompt.name] = _prompt

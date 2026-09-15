@@ -291,6 +291,9 @@ def test_every_prompt_renders_with_the_untrusted_text_note():
     values.update(section_label="Rationale", prisma_item="6", guidance="g", evidence="{}")
     values.update(stage="title and abstract", passage_instruction="i", arms="a")
     values.update(outcome="o", questions="q", checklist="c", items="i", statuses="s", question="q", findings="f")
+    values.update(section="s", guidance="g", review="r", evidence="e", references="r", current="c", task="t")
+    values.update(journal_style="j", text="t", kind_instruction="k", journal="j", guideline="g", requirement_names="r")
+    values.update(statements="s", comments="c")
 
     for prompt in PROMPTS.values():
         placeholders = {name for name in values if f"${name}" in prompt.text}

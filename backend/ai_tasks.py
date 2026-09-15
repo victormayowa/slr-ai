@@ -62,6 +62,7 @@ TASK_PERMISSIONS = {
     "appraisal": Permission.APPRAISE,
     "reporting": Permission.APPRAISE,
     "statistics": Permission.RUN_ANALYSIS,
+    "surveillance": Permission.SCREEN,
     "embedding": Permission.RUN_SEARCH,
     "fulltext": Permission.EXTRACT,
 }
@@ -541,6 +542,11 @@ async def run_job(job_id: int) -> str:
                 require_stage_open(db, job.project_id, "appraisal")
                 # For these jobs, record_ids holds assessment ids.
                 await process_assessments(db, access, job, job.task, job.record_ids)
+            elif job.task == "surveillance":
+                # For surveillance jobs, record_ids holds surveillance candidate ids.
+                from surveillance import process_candidates
+
+                await process_candidates(db, access, job, job.record_ids)
             elif job.task == "statistics":
                 require_stage_open(db, job.project_id, "synthesis")
                 # For statistics jobs, record_ids holds analysis run ids.
