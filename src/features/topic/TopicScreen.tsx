@@ -104,7 +104,7 @@ export function TopicScreen() {
     setBusy(null);
   };
 
-  const useAsQuestion = async (item: TopicQuestion) => {
+  const applyQuestion = async (item: TopicQuestion) => {
     setBusy('applying');
     setNotice(null);
     try {
@@ -242,7 +242,7 @@ export function TopicScreen() {
                       {item.based_on_review_ids.length > 0 && (
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Based on: {item.based_on_review_ids.map(ref => reviewTitles.get(ref) ?? ref).join('; ')}</div>
                       )}
-                      <button className="btn-glass" onClick={() => useAsQuestion(item)} disabled={busy !== null} style={{ padding: '4px 10px', marginTop: '6px', fontSize: '0.8rem' }}>Use as review question</button>
+                      <button className="btn-glass" onClick={() => applyQuestion(item)} disabled={busy !== null} style={{ padding: '4px 10px', marginTop: '6px', fontSize: '0.8rem' }}>Use as review question</button>
                     </li>
                   ))}
                 </ol>

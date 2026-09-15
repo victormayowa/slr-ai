@@ -162,10 +162,21 @@ def requirements(db: Session, project: models.Project, stage: str) -> list[Requi
 
     records = _load_records(db, project.id)
     if stage == "search":
-        return [
+        registrations = db.scalars(
+            select(models.ProtocolRegistration).where(models.ProtocolRegistration.project_id == project.id)
+        ).all()
+        recorded = [r for r in registrations if r.status in ("submitted", "registered", "waived")]
+        search_requirements = [
             Requirement("At least one database search or file import", _count(db, models.SearchRun, project.id) > 0),
             Requirement("Deduplication run on every record", not find_duplicates(records)),
+            Requirement("Protocol registration submitted, or registration waived with a reason", bool(recorded)),
         ]
+        latest_version = _latest_version(db, project.id, "protocol")
+        if any(r.status != "waived" and r.protocol_version < latest_version for r in recorded):
+            search_requirements.append(
+                Requirement(f"Registry record updated with protocol version {latest_version}", False)
+            )
+        return search_requirements
     if stage == "screening":
         unique = [r for r in records if r.duplicate_of_id is None]
         return [

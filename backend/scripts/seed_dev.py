@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 
 import bcrypt
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
@@ -372,6 +372,30 @@ def _seed_demo_review(db: Session, project: models.Project, users: dict[str, mod
             db.add(run)
 
 
+def _waive_demo_registration(db: Session, project: models.Project, lead: models.User) -> None:
+    exists = db.scalar(
+        select(models.ProtocolRegistration.id).where(models.ProtocolRegistration.project_id == project.id).limit(1)
+    )
+    if exists is not None:
+        return
+    version = db.scalar(
+        select(func.max(models.StageSnapshot.version)).where(
+            models.StageSnapshot.project_id == project.id, models.StageSnapshot.stage == "protocol"
+        )
+    )
+    db.add(
+        models.ProtocolRegistration(
+            project_id=project.id,
+            registry_name="none",
+            status="waived",
+            protocol_version=version or 1,
+            waiver_reason="Demo project for local testing; not a real review.",
+            created_by_id=lead.id,
+        )
+    )
+    db.flush()
+
+
 def _advance_demo_workflow(db: Session, project: models.Project, lead: models.User) -> None:
     """Sign off the demo protocol and search (after deduplicating) so the demo opens at screening.
 
@@ -387,6 +411,7 @@ def _advance_demo_workflow(db: Session, project: models.Project, lead: models.Us
         except WorkflowError:
             continue
         if stage == "search":
+            _waive_demo_registration(db, project, lead)
             records = db.scalars(select(models.Record).where(models.Record.project_id == project.id)).all()
             duplicates = find_duplicates(records)
             for record in records:

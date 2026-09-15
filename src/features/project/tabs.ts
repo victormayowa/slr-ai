@@ -6,14 +6,15 @@ export const PROJECT_TABS = [
   { path: 'protocol', label: '4. Eligibility Criteria' },
   { path: 'analysis-plan', label: '5. Analysis Plan' },
   { path: 'protocol-document', label: '6. Protocol Document' },
-  { path: 'search', label: '7. Database Search & Import' },
-  { path: 'deduplication', label: '8. Deduplication' },
-  { path: 'screening', label: '9. Abstract Screening' },
-  { path: 'extraction-fields', label: '10. Extraction Rules' },
-  { path: 'extraction', label: '11. Full-Text Screening & Extract' },
-  { path: 'prisma', label: '12. PRISMA & Export' },
-  { path: 'risk-of-bias', label: '13. Risk of Bias & Quality' },
-  { path: 'synthesis', label: '14. Narrative Synthesis' },
+  { path: 'registration', label: '7. Registration & Export' },
+  { path: 'search', label: '8. Database Search & Import' },
+  { path: 'deduplication', label: '9. Deduplication' },
+  { path: 'screening', label: '10. Abstract Screening' },
+  { path: 'extraction-fields', label: '11. Extraction Rules' },
+  { path: 'extraction', label: '12. Full-Text Screening & Extract' },
+  { path: 'prisma', label: '13. PRISMA & Export' },
+  { path: 'risk-of-bias', label: '14. Risk of Bias & Quality' },
+  { path: 'synthesis', label: '15. Narrative Synthesis' },
 ] as const;
 
 export type ProjectTab = (typeof PROJECT_TABS)[number]['path'];

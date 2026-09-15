@@ -25,6 +25,7 @@ from protocol_design_routes import catalog_router as protocol_catalog_router
 from protocol_design_routes import router as protocol_design_router
 from rate_limiting import ai_rate_limit
 from records_routes import router as records_router
+from registration_routes import router as registration_router
 from review_routes import router as review_router
 from screening_routes import router as screening_router
 from security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
@@ -85,6 +86,7 @@ app.include_router(jobs_router)
 app.include_router(protocol_design_router)
 app.include_router(protocol_catalog_router)
 app.include_router(topic_router)
+app.include_router(registration_router)
 
 
 @app.exception_handler(TaskNotReady)

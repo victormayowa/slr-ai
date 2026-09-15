@@ -10,6 +10,7 @@ import { AnalysisPlanScreen } from './features/protocol/AnalysisPlanScreen';
 import { ProtocolDocumentScreen } from './features/protocol/ProtocolDocumentScreen';
 import { ProtocolScreen } from './features/protocol/ProtocolScreen';
 import { QuestionScreen } from './features/question/QuestionScreen';
+import { RegistrationScreen } from './features/registration/RegistrationScreen';
 import { SetupScreen } from './features/protocol/SetupScreen';
 import { ScreeningScreen } from './features/screening/ScreeningScreen';
 import { DeduplicationScreen } from './features/search/DeduplicationScreen';
@@ -44,6 +45,7 @@ function App() {
           <Route path="protocol" element={<ProtocolScreen />} />
           <Route path="analysis-plan" element={<AnalysisPlanScreen />} />
           <Route path="protocol-document" element={<ProtocolDocumentScreen />} />
+          <Route path="registration" element={<RegistrationScreen />} />
           <Route path="search" element={<SearchScreen />} />
           <Route path="deduplication" element={<DeduplicationScreen />} />
           <Route path="screening" element={<ScreeningScreen />} />

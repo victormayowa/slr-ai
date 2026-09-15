@@ -553,3 +553,27 @@ class TopicExploration(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     created_by: Mapped[User | None] = relationship()
+
+
+class ProtocolRegistration(Base):
+    """Registration of the locked protocol (PROSPERO, OSF, or another registry), or a waiver with a reason."""
+
+    __tablename__ = "protocol_registrations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    # "PROSPERO", "OSF", another registry's name, or "none" for a waiver. (Named registry_name because SQLAlchemy
+    # reserves `registry` on mapped classes.)
+    registry_name: Mapped[str] = mapped_column("registry", String(40))
+    # "deposited" (files on OSF, not yet registered), "submitted", "registered", or "waived"
+    status: Mapped[str] = mapped_column(String(12))
+    registration_id: Mapped[str] = mapped_column(String(100), default="")
+    url: Mapped[str | None] = mapped_column(String(500))
+    # The protocol version (stage snapshot) the registry record reflects.
+    protocol_version: Mapped[int] = mapped_column(Integer)
+    waiver_reason: Mapped[str | None] = mapped_column(Text)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    created_by: Mapped[User | None] = relationship()
