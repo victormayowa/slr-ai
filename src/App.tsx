@@ -15,6 +15,7 @@ import { ScreeningScreen } from './features/screening/ScreeningScreen';
 import { DeduplicationScreen } from './features/search/DeduplicationScreen';
 import { SearchScreen } from './features/search/SearchScreen';
 import { SynthesisScreen } from './features/synthesis/SynthesisScreen';
+import { TopicScreen } from './features/topic/TopicScreen';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -38,6 +39,7 @@ function App() {
         <Route path="/projects/:projectId" element={<ProjectRoute />}>
           <Route index element={<Navigate to="setup" replace />} />
           <Route path="setup" element={<SetupScreen />} />
+          <Route path="topic" element={<TopicScreen />} />
           <Route path="question" element={<QuestionScreen />} />
           <Route path="protocol" element={<ProtocolScreen />} />
           <Route path="analysis-plan" element={<AnalysisPlanScreen />} />

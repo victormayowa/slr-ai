@@ -167,6 +167,31 @@ describe('App routing', () => {
     expect(JSON.parse(String(saved?.[1]?.body))).toMatchObject({ framework: 'PCC', elements: { population: 'Adults', concept: '' } });
   });
 
+  it('explores a topic and flags reviews that may be outdated', async () => {
+    const exploration = {
+      id: 3, query: 'aspirin', assumptions: {}, created_by: 'Liam Lead', created_at: '2026-09-15T00:00:00Z', ai_questions: null,
+      results: {
+        query: 'aspirin', run_at: '2026-09-15T00:00:00Z',
+        sources: { pubmed: { label: 'PubMed records', count: 1200, error: null }, clinicaltrials_gov: { label: 'ClinicalTrials.gov registered studies', count: null, error: 'ClinicalTrials.gov search failed.' } },
+        publications_by_year: { 2025: 10, 2026: 4 },
+        existing_reviews: [{ ref: 'PubMed:1', id: '1', source: 'PubMed', title: 'Aspirin: a systematic review', year: '2016', venue: 'BMJ', doi: '', url: 'https://pubmed.ncbi.nlm.nih.gov/1/', possibly_outdated: true, newer_randomized_trials: 4 }],
+        review_errors: [], registrations: [], registration_error: null, prospero_search_url: 'https://www.crd.york.ac.uk/prospero/',
+        meta_analysis_feasibility: { level: 'likely', randomized_trials: 9, explanation: '9 randomized trials match.' },
+        workload: null, notes: [],
+      },
+    };
+    const fetchMock = mockApi({ 'POST /api/auth/login': LOGIN, ...WORKSPACE_API, 'GET /api/projects/7/topic-explorations': [], 'POST /api/projects/7/topic-explorations': exploration });
+    renderApp('/projects/7/topic');
+
+    signIn();
+    fireEvent.click(await screen.findByRole('button', { name: 'Explore topic' }));
+
+    expect(await screen.findByText('Possibly outdated: 4 newer randomized trials in PubMed')).toBeTruthy();
+    expect(screen.getByText('ClinicalTrials.gov search failed.')).toBeTruthy();
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST' && String(init?.body).includes('reviewers'));
+    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ query: 'Aspirin review', reviewers: 2 });
+  });
+
   it('explains when a project cannot be opened', async () => {
     mockApi({ 'POST /api/auth/login': LOGIN });
     renderApp('/projects/7/setup');

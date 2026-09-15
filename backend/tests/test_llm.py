@@ -288,7 +288,7 @@ def test_invented_or_empty_quotes_are_not_grounded(quote):
 def test_every_prompt_renders_with_the_untrusted_text_note():
     values = {"research_question": "q", "criteria": "c", "paper": "p", "fields": "f", "tool": "t", "domains": "d"}
     values.update(studies="s", query="q", elements="population", topic="t", frameworks="f", project="{}")
-    values.update(section_label="Rationale", prisma_item="6", guidance="g")
+    values.update(section_label="Rationale", prisma_item="6", guidance="g", evidence="{}")
 
     for prompt in PROMPTS.values():
         placeholders = {name for name in values if f"${name}" in prompt.text}

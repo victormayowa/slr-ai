@@ -102,3 +102,56 @@ def search_pubmed(query: str, max_results: int = 50) -> list[dict]:
         if record:
             records[record["id"]] = record
     return [records[pmid] for pmid in id_list if pmid in records]
+
+
+def _esearch(term: str, retmax: int, sort: str | None = None) -> dict:
+    params = _eutils_params(term=term, retmode="json", retmax=retmax)
+    if sort:
+        params["sort"] = sort
+    response = requests.get(f"{EUTILS_BASE}/esearch.fcgi", params=params, timeout=REQUEST_TIMEOUT_SECONDS)
+    response.raise_for_status()
+    return response.json().get("esearchresult", {})
+
+
+def count_pubmed(query: str) -> int:
+    """How many PubMed records match the query."""
+    try:
+        return int(_esearch(query, retmax=0).get("count", 0))
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("PubMed count failed", exc_info=True)
+        raise SearchError("PubMed search failed. Please try again shortly.") from exc
+
+
+def find_pubmed_reviews(query: str, limit: int = 8) -> list[dict]:
+    """The most recent PubMed records in the systematic review subset that match the query."""
+    try:
+        ids = _esearch(f"({query}) AND systematic[sb]", retmax=limit, sort="pub_date").get("idlist", [])
+        if not ids:
+            return []
+        summary = requests.get(
+            f"{EUTILS_BASE}/esummary.fcgi",
+            params=_eutils_params(id=",".join(ids), retmode="json"),
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        summary.raise_for_status()
+        result = summary.json().get("result", {})
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("PubMed review search failed", exc_info=True)
+        raise SearchError("PubMed search failed. Please try again shortly.") from exc
+
+    reviews = []
+    for pmid in ids:
+        item = result.get(pmid) or {}
+        doi = next((a.get("value", "") for a in item.get("articleids", []) if a.get("idtype") == "doi"), "")
+        reviews.append(
+            {
+                "id": pmid,
+                "source": "PubMed",
+                "title": item.get("title") or "No Title",
+                "year": (item.get("pubdate") or "")[:4],
+                "venue": item.get("fulljournalname") or item.get("source") or "",
+                "doi": doi,
+                "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+            }
+        )
+    return reviews

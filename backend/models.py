@@ -535,3 +535,21 @@ class ProtocolSection(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     updated_by: Mapped[User | None] = relationship()
+
+
+class TopicExploration(Base):
+    """What's published and registered on a topic when a reviewer looked, used to judge novelty and feasibility."""
+
+    __tablename__ = "topic_explorations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    query: Mapped[str] = mapped_column(Text)
+    # Workload estimate inputs (topic_exploration.WorkloadAssumptions).
+    assumptions: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    # Counts, trends, existing reviews, registrations, and estimates (topic_exploration.explore_topic).
+    results: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    created_by: Mapped[User | None] = relationship()

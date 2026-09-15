@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from llm.prompts import CONSISTENCY_PROMPT, QUESTION_PROMPT, SECTION_DRAFT_PROMPT
+from llm.prompts import CONSISTENCY_PROMPT, QUESTION_PROMPT, SECTION_DRAFT_PROMPT, TOPIC_QUESTIONS_PROMPT
 from llm.runner import AIContext, AIResult, complete_structured
 from protocol_frameworks import FINER_CRITERIA, FRAMEWORKS, Section, describe_frameworks
 from services.errors import LLMError
@@ -106,3 +106,45 @@ async def review_protocol_consistency(
         if issue.message.strip()
     ]
     return AIResult({"issues": issues}, result.usage)
+
+
+GapKind = Literal[
+    "no_review_found", "outdated_review", "uncovered_population_or_setting", "conflicting_findings", "other"
+]
+
+
+class TopicQuestion(BaseModel):
+    question: str
+    framework: FrameworkKey
+    gap: GapKind
+    rationale: str
+    based_on_review_ids: list[str] = []
+
+
+class TopicQuestionsOutput(BaseModel):
+    questions: list[TopicQuestion]
+    evidence_limitations: str = ""
+
+
+async def suggest_topic_questions(
+    ai: AIContext, project: dict[str, Any], evidence: dict[str, Any], review_ids: set[str]
+) -> AIResult[dict[str, Any]]:
+    prompt = TOPIC_QUESTIONS_PROMPT.render(
+        project=json.dumps(project, indent=2, default=str), evidence=json.dumps(evidence, indent=2, default=str)
+    )
+    result = await complete_structured(ai, prompt, TopicQuestionsOutput, max_tokens=4000)
+    questions = [
+        {
+            "question": item.question.strip(),
+            "framework": item.framework,
+            "gap": item.gap,
+            "rationale": item.rationale.strip(),
+            # Only reviews that were actually retrieved.
+            "based_on_review_ids": [ref for ref in item.based_on_review_ids if ref in review_ids],
+        }
+        for item in result.value.questions[:5]
+        if item.question.strip()
+    ]
+    return AIResult(
+        {"questions": questions, "evidence_limitations": result.value.evidence_limitations.strip()}, result.usage
+    )

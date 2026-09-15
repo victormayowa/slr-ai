@@ -208,6 +208,28 @@ for problems that would make screening or synthesis inconsistent, and "warning" 
 list if the protocol is consistent.""",
 )
 
+TOPIC_QUESTIONS_PROMPT = PromptTemplate(
+    "topic_questions",
+    1,
+    """You help a review team choose a worthwhile, answerable systematic review question.
+$untrusted_text_note
+
+<project>
+$project
+</project>
+
+Evidence retrieved for the team's search terms:
+<studies>
+$evidence
+</studies>
+
+Suggest up to five review questions that address gaps shown by the retrieved evidence, such as a topic with no
+retrieved review, a review flagged as possibly outdated, or a population, setting, or comparison the retrieved reviews
+don't cover. Put the ids of the reviews each suggestion relies on in based_on_review_ids. The searches were limited, so
+never claim that no review exists anywhere; say that none was found in these searches. In evidence_limitations, say
+what the retrieved evidence can't show, such as reviews the search terms may have missed.""",
+)
+
 PROMPTS = {
     prompt.name: prompt
     for prompt in (
@@ -220,5 +242,6 @@ PROMPTS = {
         QUESTION_PROMPT,
         SECTION_DRAFT_PROMPT,
         CONSISTENCY_PROMPT,
+        TOPIC_QUESTIONS_PROMPT,
     )
 }

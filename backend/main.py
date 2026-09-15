@@ -30,6 +30,7 @@ from screening_routes import router as screening_router
 from security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 from services.ai_screening import answer_faq
 from services.errors import LLMError
+from topic_routes import router as topic_router
 from workflow import WorkflowError
 from workflow_routes import router as workflow_router
 
@@ -83,6 +84,7 @@ app.include_router(ai_router)
 app.include_router(jobs_router)
 app.include_router(protocol_design_router)
 app.include_router(protocol_catalog_router)
+app.include_router(topic_router)
 
 
 @app.exception_handler(TaskNotReady)

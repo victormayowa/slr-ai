@@ -138,7 +138,7 @@ def _record_change(db: Session, access: ProjectAccess, action: str, entity_id: i
     )
 
 
-async def _suggest(
+async def run_protocol_ai(
     db: Session,
     access: ProjectAccess,
     task: str,
@@ -249,7 +249,9 @@ async def suggest_question(
             f"Suggested criteria: {protocol.suggested_criteria}",
         ]
     )
-    suggestion = await _suggest(db, access, "question", QUESTION_PROMPT, lambda ai: structure_question(ai, topic))
+    suggestion = await run_protocol_ai(
+        db, access, "question", QUESTION_PROMPT, lambda ai: structure_question(ai, topic)
+    )
     return suggestion_out(suggestion)
 
 
@@ -365,7 +367,7 @@ async def draft_section(
         raise HTTPException(status_code=404, detail="Unknown protocol section")
     require_stage_open(db, access.project.id, "protocol")
     context = protocol_context(db, access.project, exclude_section=key)
-    suggestion = await _suggest(
+    suggestion = await run_protocol_ai(
         db,
         access,
         "section",
@@ -403,7 +405,7 @@ async def review_consistency(
     framework = FRAMEWORKS.get(protocol.framework)
     element_keys = {element.key for element in framework.elements} if framework else set()
     context = protocol_context(db, access.project)
-    suggestion = await _suggest(
+    suggestion = await run_protocol_ai(
         db,
         access,
         "consistency",
