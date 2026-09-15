@@ -231,13 +231,21 @@ class SearchRun(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     strategy_id: Mapped[int | None] = mapped_column(ForeignKey("search_strategies.id", ondelete="SET NULL"))
-    # "database" or "import"
+    # "database", "register", or "other" (PRISMA 2020 sources), or "import" for uploads with no source recorded
     kind: Mapped[str] = mapped_column(String(10))
     # The database searched, or the imported file's name.
     database: Mapped[str] = mapped_column(String(200))
     source_label: Mapped[str] = mapped_column(String(300))
     query: Mapped[str | None] = mapped_column(Text)
     result_count: Mapped[int] = mapped_column(Integer)
+    # PRISMA-S details: the connector and interface used, how many results the source reported, when it was
+    # searched, the export file format for imports, and any limits or filters applied.
+    connector: Mapped[str | None] = mapped_column(String(40))
+    interface: Mapped[str | None] = mapped_column(String(200))
+    total_available: Mapped[int | None] = mapped_column(Integer)
+    searched_on: Mapped[str | None] = mapped_column(String(40))
+    file_format: Mapped[str | None] = mapped_column(String(20))
+    filters: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
     executed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -259,6 +267,9 @@ class Record(Base):
     doi: Mapped[str] = mapped_column(String(255), default="", index=True)
     external_id: Mapped[str] = mapped_column(String(100), default="")
     abstract: Mapped[str] = mapped_column(Text, default="")
+    # Other identifiers, such as {"pmid": ..., "pmcid": ..., "nct": ...}, used for deduplication.
+    identifiers: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    url: Mapped[str] = mapped_column(String(1000), default="", server_default="")
     # Set by deduplication; the record this one duplicates. Duplicates are kept for provenance but not screened.
     duplicate_of_id: Mapped[int | None] = mapped_column(ForeignKey("records.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -577,3 +588,20 @@ class ProtocolRegistration(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     created_by: Mapped[User | None] = relationship()
+
+
+class DuplicateReview(Base):
+    """A reviewer's decision on a pair of possible duplicates, so the pair isn't suggested again."""
+
+    __tablename__ = "duplicate_reviews"
+    __table_args__ = (UniqueConstraint("project_id", "record_id", "other_record_id", name="uq_duplicate_review"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    # The lower record id first.
+    record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"))
+    other_record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"))
+    # "duplicate" or "not_duplicate"
+    decision: Mapped[str] = mapped_column(String(20))
+    reviewer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

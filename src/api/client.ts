@@ -18,12 +18,14 @@ export const errorDetail = (data: any, status: number): string => {
 
 export const errorMessage = (err: unknown, fallback: string) => (err instanceof ApiError ? err.message : fallback);
 
-// Sends a JSON request to the API and returns the parsed response, throwing ApiError for non-2xx responses.
+// Sends a JSON (or FormData) request to the API and returns the parsed response, throwing ApiError for non-2xx responses.
 export async function requestJson(method: string, path: string, body?: unknown, token?: string | null): Promise<any> {
+  // FormData bodies (file uploads) set their own multipart Content-Type.
+  const isForm = body instanceof FormData;
   const res = await fetch(`${API_BASE}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
   });
   const data = res.status === 204 ? null : await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(errorDetail(data, res.status), res.status);

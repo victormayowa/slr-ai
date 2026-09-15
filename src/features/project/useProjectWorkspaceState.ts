@@ -1,8 +1,7 @@
-import Papa from 'papaparse';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { modelDisplayName, type AiModelInfo } from '../../api/ai';
-import { ApiError, errorMessage } from '../../api/client';
+import { errorMessage } from '../../api/client';
 import { jobProblem, jobProgress, waitForJob, type AiJob } from '../../api/jobs';
 import type { ProtocolCatalog } from '../../api/protocol';
 import type { ProjectSummary } from '../../api/projects';
@@ -53,10 +52,9 @@ export function useProjectWorkspaceState(projectId: number) {
   const [exclusionItems, setExclusionItems] = useState<ProtocolItem[]>([]);
   const [searchItems, setSearchItems] = useState<SearchItem[]>([]);
 
-  const [searchDBLoading, setSearchDBLoading] = useState<string | null>(null);
   const [literatureResults, setLiteratureResults] = useState<Paper[]>([]);
   const [dedupLoading, setDedupLoading] = useState(false);
-  const [uploadLoading, setUploadLoading] = useState(false);
+  const [dedupVersion, setDedupVersion] = useState(0);
   const [abstractLoading, setAbstractLoading] = useState(false);
   const [abstractProgress, setAbstractProgress] = useState<number | null>(null);
 
@@ -357,56 +355,14 @@ export function useProjectWorkspaceState(projectId: number) {
     }
   };
 
-  const handleRunDatabaseSearch = async (item: SearchItem) => {
-    setSearchDBLoading(item.database);
-    try {
-      await apiRequest('PATCH', projectPath(`search-strategies/${item.id}`), { query: item.string });
-      await apiPost(projectPath('searches'), { strategy_id: Number(item.id), limit: 50 });
-      await refreshRecords();
-    } catch (err) {
-      alert(errorMessage(err, "Failed to reach the search API. Ensure the backend is running."));
-    }
-    setSearchDBLoading(null);
-  };
-
-  const importCsvFile = (file: File) => {
-    setUploadLoading(true);
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: async (results) => {
-        const records = (results.data as any[]).map((row, i) => ({
-          title: String(row['Title'] || row['title'] || `Uploaded record ${i + 1}`).slice(0, 2000),
-          authors: String(row['Authors'] || row['Author'] || row['authors'] || row['Author(s)'] || '').slice(0, 5000),
-          year: String(row['Year'] || row['year'] || '').slice(0, 20),
-          venue: String(row['Venue'] || row['venue'] || '').slice(0, 1000),
-          doi: String(row['DOI'] || row['doi'] || '').slice(0, 255),
-          abstract: String(row['Abstract'] || row['abstract'] || '').slice(0, 50000),
-        }));
-        try {
-          if (records.length === 0) throw new ApiError('The file has no rows to import.');
-          await apiPost(projectPath('imports'), { file_name: file.name.slice(0, 200), records });
-          await refreshRecords();
-        } catch (err) {
-          alert(errorMessage(err, 'Could not import the file.'));
-        }
-        setUploadLoading(false);
-      },
-      error: (err) => {
-        console.error(err);
-        alert("Error parsing CSV.");
-        setUploadLoading(false);
-      }
-    });
-  };
-
   const handleRunDedup = async () => {
     setDedupLoading(true);
     try {
       const result = await apiPost(projectPath('deduplicate'), {});
       await refreshRecords();
-      alert(`Set aside ${result.duplicates_marked} duplicate record(s).`);
-      goTo('screening');
+      setDedupVersion(version => version + 1);
+      const review = result.possible_duplicates > 0 ? ` ${result.possible_duplicates} possible duplicate pair(s) need your decision.` : '';
+      alert(`Set aside ${result.duplicates_marked} duplicate record(s).${review}`);
     } catch (err) {
       alert(errorMessage(err, 'Deduplication failed.'));
     }
@@ -579,10 +535,10 @@ export function useProjectWorkspaceState(projectId: number) {
     exclusionItems,
     searchItems,
     setSearchItems,
-    searchDBLoading,
     literatureResults,
     dedupLoading,
-    uploadLoading,
+    dedupVersion,
+    refreshRecords,
     abstractLoading,
     abstractProgress,
     extractionColumns,
@@ -608,8 +564,6 @@ export function useProjectWorkspaceState(projectId: number) {
     protocolCatalog,
     refreshWorkflow: loadWorkflow,
     saveSearchString,
-    handleRunDatabaseSearch,
-    importCsvFile,
     handleRunDedup,
     handleRunAbstractScreening,
     handleUserDecision,

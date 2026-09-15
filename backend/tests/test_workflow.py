@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 from sqlalchemy import select
 from workflow_helpers import (
@@ -22,7 +24,7 @@ from workflow_helpers import (
 )
 
 import models
-import records_routes
+import search_sources
 from database import SessionLocal
 from project_defaults import DEFAULT_EXTRACTION_FIELDS
 from services.errors import SearchError
@@ -168,40 +170,69 @@ def test_extraction_fields_can_be_replaced(client, project):
 # Search, import, deduplication
 
 
-def test_search_run_stores_records_with_an_honest_source_label(client, project, fake_provider, monkeypatch):
+def test_search_runs_record_prisma_s_details_and_never_substitute_a_database(
+    client, project, fake_provider, monkeypatch
+):
     project_id, headers = project
-    embase = lock_protocol(client, project_id, headers, fake_provider)["search_strategies"][1]
+    pubmed_strategy, embase = lock_protocol(client, project_id, headers, fake_provider)["search_strategies"]
+
+    refused = client.post(url(project_id, "searches"), json={"strategy_id": embase["id"]}, headers=headers)
+    assert refused.status_code == 400
+    assert "Run the strategy on Embase.com or Ovid" in refused.json()["detail"]
+
     result = {
-        "id": "W1",
+        "id": "123",
         "title": "Aspirin",
         "authors": "A",
         "year": 2020,
         "venue": "",
         "doi": "10.1/x",
         "abstract": "a",
+        "identifiers": {"pmid": "123"},
+        "url": "https://pubmed.ncbi.nlm.nih.gov/123/",
     }
-    monkeypatch.setattr(records_routes, "search_openalex", lambda query, limit: [result])
+    pubmed = search_sources.CONNECTORS["pubmed"]
+    monkeypatch.setitem(
+        search_sources.CONNECTORS, "pubmed", replace(pubmed, search=lambda query, limit: ([result], 1532))
+    )
 
-    run = client.post(url(project_id, "searches"), json={"strategy_id": embase["id"]}, headers=headers)
-
+    run = client.post(
+        url(project_id, "searches"), json={"strategy_id": pubmed_strategy["id"], "limit": 100}, headers=headers
+    )
     assert run.status_code == 201
-    assert run.json()["source"] == "OpenAlex (no native Embase connector yet)"
-    records = client.get(url(project_id, "records"), headers=headers).json()
-    assert [(r["title"], r["year"], r["source"]) for r in records] == [
-        ("Aspirin", "2020", "OpenAlex (no native Embase connector yet)")
+    body = run.json()
+    assert (body["source"], body["result_count"], body["total_available"], body["interface"], body["kind"]) == (
+        "PubMed",
+        1,
+        1532,
+        "PubMed (NCBI E-utilities API)",
+        "database",
+    )
+    assert body["filters"] == {"retrieval_limit": 100}
+    elsewhere = client.post(
+        url(project_id, "searches"), json={"strategy_id": embase["id"], "connector": "pubmed"}, headers=headers
+    )
+    assert elsewhere.json()["source"] == "PubMed (search string written for Embase)"
+    records = client.get(url(project_id, "records?include_duplicates=true"), headers=headers).json()
+    assert records[0]["identifiers"] == {"pmid": "123"}
+    assert [r["source"] for r in client.get(url(project_id, "search-runs"), headers=headers).json()] == [
+        "PubMed",
+        "PubMed (search string written for Embase)",
     ]
 
 
 def test_failed_search_stores_nothing(client, project, fake_provider, monkeypatch):
     project_id, headers = project
-    pubmed = lock_protocol(client, project_id, headers, fake_provider)["search_strategies"][0]
+    pubmed_strategy = lock_protocol(client, project_id, headers, fake_provider)["search_strategies"][0]
 
     def unavailable(query, limit):
         raise SearchError("PubMed search failed. Please try again shortly.")
 
-    monkeypatch.setattr(records_routes, "search_pubmed", unavailable)
+    monkeypatch.setitem(
+        search_sources.CONNECTORS, "pubmed", replace(search_sources.CONNECTORS["pubmed"], search=unavailable)
+    )
 
-    response = client.post(url(project_id, "searches"), json={"strategy_id": pubmed["id"]}, headers=headers)
+    response = client.post(url(project_id, "searches"), json={"strategy_id": pubmed_strategy["id"]}, headers=headers)
     assert response.status_code == 502
     assert client.get(url(project_id, "records"), headers=headers).json() == []
 
@@ -213,12 +244,20 @@ def test_deduplication_and_prisma_counts_come_from_stored_data(client, project, 
     duplicates = [{"title": "Different title", "doi": "10.1/A"}, {"title": "Statin trial!"}]
     import_records(client, project_id, headers, duplicates, file_name="second.csv")
 
-    assert client.post(url(project_id, "deduplicate"), headers=headers).json() == {"duplicates_marked": 2}
-    assert client.post(url(project_id, "deduplicate"), headers=headers).json() == {"duplicates_marked": 0}
+    assert client.post(url(project_id, "deduplicate"), headers=headers).json() == {
+        "duplicates_marked": 2,
+        "possible_duplicates": 0,
+    }
+    assert client.post(url(project_id, "deduplicate"), headers=headers).json() == {
+        "duplicates_marked": 0,
+        "possible_duplicates": 0,
+    }
     assert len(client.get(url(project_id, "records"), headers=headers).json()) == 2
     assert len(client.get(url(project_id, "records?include_duplicates=true"), headers=headers).json()) == 4
     assert client.get(url(project_id, "prisma"), headers=headers).json() == {
         "identified_from_databases": 0,
+        "identified_from_registers": 0,
+        "identified_from_other_methods": 0,
         "identified_from_uploads": 4,
         "by_source": {"Manual upload: export.csv": 2, "Manual upload: second.csv": 2},
         "duplicates_removed": 2,

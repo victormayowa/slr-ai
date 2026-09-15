@@ -17,10 +17,11 @@ from sqlalchemy.orm import Session, selectinload
 
 import models
 from audit import record_event
+from dedup import candidate_pairs, find_duplicates, reviewed_pairs
 from permissions import Permission
 from protocol_design import project_sections, protocol_issues
 from protocol_frameworks import PROTOCOL_SECTIONS, REQUIRED_SECTIONS
-from review_data import TITLE_ABSTRACT, final_decision, find_duplicates, has_successful_run, latest_run
+from review_data import TITLE_ABSTRACT, final_decision, has_successful_run, latest_run
 
 STAGES = ["protocol", "search", "screening", "extraction", "appraisal", "synthesis"]
 
@@ -169,6 +170,7 @@ def requirements(db: Session, project: models.Project, stage: str) -> list[Requi
         search_requirements = [
             Requirement("At least one database search or file import", _count(db, models.SearchRun, project.id) > 0),
             Requirement("Deduplication run on every record", not find_duplicates(records)),
+            Requirement("Possible duplicates reviewed", not candidate_pairs(records, reviewed_pairs(db, project.id))),
             Requirement("Protocol registration submitted, or registration waived with a reason", bool(recorded)),
         ]
         latest_version = _latest_version(db, project.id, "protocol")
@@ -253,6 +255,12 @@ def _snapshot_content(db: Session, project: models.Project, stage: str) -> dict[
                     "source": run.source_label,
                     "query": run.query,
                     "result_count": run.result_count,
+                    "total_available": run.total_available,
+                    "connector": run.connector,
+                    "interface": run.interface,
+                    "searched_on": run.searched_on,
+                    "file_format": run.file_format,
+                    "filters": run.filters,
                     "executed_at": run.executed_at,
                 }
                 for run in runs

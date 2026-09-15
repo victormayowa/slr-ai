@@ -18,9 +18,9 @@ from sqlalchemy.orm import Session
 
 import models
 from database import SessionLocal
+from dedup import find_duplicates
 from permissions import ProjectRole
 from project_defaults import apply_project_defaults
-from review_data import find_duplicates
 from workflow import WorkflowError, complete_stage, require_stage_open
 
 DEMO_PASSWORD = "Review-Dev-2026!"

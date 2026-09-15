@@ -56,6 +56,8 @@ def test_pubmed_article_parsed_with_structured_abstract():
         "venue": "The Lancet",
         "doi": "10.1000/abc",
         "abstract": "METHODS: We randomized adults.\nRESULTS: Events fell.",
+        "identifiers": {"pmid": "123"},
+        "url": "https://pubmed.ncbi.nlm.nih.gov/123/",
     }
 
 

@@ -41,25 +41,51 @@ def _authors(work: dict) -> str:
     return ", ".join(names[:3]) + (" et al." if len(names) > 3 else "")
 
 
-def search_openalex(query: str, max_results: int = 50) -> list[dict]:
-    data = _get_works({"search": query, "per-page": min(max_results, 200)})
+def _work_record(work: dict) -> dict:
+    source = (work.get("primary_location") or {}).get("source") or {}
+    ids = work.get("ids") or {}
+    openalex_id = (work.get("id") or "").split("/")[-1]
+    return {
+        "id": openalex_id,
+        "title": work.get("title") or "No Title",
+        "authors": _authors(work),
+        "year": work.get("publication_year") or "",
+        "source": "OpenAlex",
+        "venue": source.get("display_name") or "",
+        "doi": (work.get("doi") or "").replace("https://doi.org/", ""),
+        "abstract": _abstract_from_inverted_index(work.get("abstract_inverted_index")),
+        "identifiers": {
+            key: value
+            for key, value in {
+                "openalex": openalex_id,
+                "pmid": (ids.get("pmid") or "").rstrip("/").split("/")[-1],
+                "pmcid": (ids.get("pmcid") or "").rstrip("/").split("/")[-1],
+            }.items()
+            if value
+        },
+        "url": work.get("doi") or work.get("id") or "",
+    }
 
-    results = []
-    for work in data.get("results", []):
-        source = (work.get("primary_location") or {}).get("source") or {}
-        results.append(
-            {
-                "id": (work.get("id") or "").split("/")[-1],
-                "title": work.get("title") or "No Title",
-                "authors": _authors(work),
-                "year": work.get("publication_year") or "",
-                "source": "OpenAlex",
-                "venue": source.get("display_name") or "",
-                "doi": (work.get("doi") or "").replace("https://doi.org/", ""),
-                "abstract": _abstract_from_inverted_index(work.get("abstract_inverted_index")),
-            }
-        )
-    return results
+
+def openalex_search(query: str, limit: int) -> tuple[list[dict], int]:
+    """Works matching the query, up to `limit`, and the total OpenAlex reports."""
+    records: list[dict] = []
+    cursor: str | None = "*"
+    total = 0
+    while len(records) < limit and cursor:
+        data = _get_works({"search": query, "per-page": min(200, limit - len(records)), "cursor": cursor})
+        meta = data.get("meta") or {}
+        total = int(meta.get("count") or 0)
+        results = data.get("results", [])
+        records += [_work_record(work) for work in results]
+        cursor = meta.get("next_cursor")
+        if not results or not cursor:
+            break
+    return records[:limit], total
+
+
+def search_openalex(query: str, max_results: int = 50) -> list[dict]:
+    return openalex_search(query, max_results)[0]
 
 
 def openalex_counts_by_year(query: str) -> tuple[int, dict[int, int]]:

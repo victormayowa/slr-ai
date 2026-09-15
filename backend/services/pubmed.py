@@ -60,6 +60,15 @@ def _parse_article(article) -> dict | None:
         "",
     )
 
+    pmcid = next(
+        (
+            article_id.text.strip()
+            for article_id in article.findall("PubmedData/ArticleIdList/ArticleId")
+            if article_id.get("IdType") == "pmc" and article_id.text
+        ),
+        "",
+    )
+
     return {
         "id": pmid,
         "title": _text(details.find("ArticleTitle")) or "No Title",
@@ -69,39 +78,38 @@ def _parse_article(article) -> dict | None:
         "venue": details.findtext("Journal/Title", default=""),
         "doi": doi,
         "abstract": "\n".join(abstract_parts),
+        "identifiers": {"pmid": pmid, **({"pmcid": pmcid} if pmcid else {})},
+        "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
     }
 
 
-def search_pubmed(query: str, max_results: int = 50) -> list[dict]:
+def pubmed_search(query: str, limit: int) -> tuple[list[dict], int]:
+    """Records matching the query, up to `limit`, and the total PubMed reports."""
     try:
-        search = requests.get(
-            f"{EUTILS_BASE}/esearch.fcgi",
-            params=_eutils_params(term=query, retmode="json", retmax=max_results),
-            timeout=REQUEST_TIMEOUT_SECONDS,
-        )
-        search.raise_for_status()
-        id_list = search.json().get("esearchresult", {}).get("idlist", [])
-        if not id_list:
-            return []
-
+        result = _esearch(query, retmax=min(limit, 9999))
+        total = int(result.get("count", 0))
+        id_list = result.get("idlist", [])
+        records = {}
         # efetch returns full records including abstracts; esummary does not.
-        fetch = requests.post(
-            f"{EUTILS_BASE}/efetch.fcgi",
-            data=_eutils_params(id=",".join(id_list), retmode="xml"),
-            timeout=REQUEST_TIMEOUT_SECONDS,
-        )
-        fetch.raise_for_status()
-        root = ET.fromstring(fetch.content)
+        for start in range(0, len(id_list), 200):
+            fetch = requests.post(
+                f"{EUTILS_BASE}/efetch.fcgi",
+                data=_eutils_params(id=",".join(id_list[start : start + 200]), retmode="xml"),
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            fetch.raise_for_status()
+            for article in ET.fromstring(fetch.content).findall("PubmedArticle"):
+                record = _parse_article(article)
+                if record:
+                    records[record["id"]] = record
     except (requests.RequestException, ValueError, ET.ParseError) as exc:
         logger.warning("PubMed search failed", exc_info=True)
         raise SearchError("PubMed search failed. Please try again shortly.") from exc
+    return [records[pmid] for pmid in id_list if pmid in records], total
 
-    records = {}
-    for article in root.findall("PubmedArticle"):
-        record = _parse_article(article)
-        if record:
-            records[record["id"]] = record
-    return [records[pmid] for pmid in id_list if pmid in records]
+
+def search_pubmed(query: str, max_results: int = 50) -> list[dict]:
+    return pubmed_search(query, max_results)[0]
 
 
 def _esearch(term: str, retmax: int, sort: str | None = None) -> dict:

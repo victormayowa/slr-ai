@@ -1,8 +1,10 @@
 """Database searches, file imports, the record list, deduplication, and PRISMA counts."""
 
 import asyncio
+from datetime import UTC, datetime
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session, selectinload
@@ -11,13 +13,14 @@ from sqlalchemy.sql import Select
 import models
 from audit import record_event
 from database import get_db
+from dedup import candidate_pairs, find_duplicates, reviewed_pairs
 from permissions import Permission
 from projects_routes import ProjectAccess, get_in_project, project_access
 from rate_limiting import ai_rate_limit
-from review_data import TITLE_ABSTRACT, final_decision, find_duplicates, latest_run
+from review_data import TITLE_ABSTRACT, final_decision, latest_run
+from search_sources import CONNECTORS, MAX_RESULTS, catalog, connector_for, import_only_source
 from services.errors import SearchError
-from services.openalex import search_openalex
-from services.pubmed import search_pubmed
+from services.record_import import ImportFormatError, parse_records
 from workflow import require_stage_open
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["records"])
@@ -27,7 +30,9 @@ MAX_IMPORT_RECORDS = 5000
 
 class SearchRunRequest(BaseModel):
     strategy_id: int
-    limit: int = Field(50, ge=1, le=200)
+    limit: int = Field(200, ge=1, le=MAX_RESULTS)
+    # Run the strategy's search string on this connector instead of the one matching its database.
+    connector: str | None = None
 
 
 class ImportedRecord(BaseModel):
@@ -82,6 +87,8 @@ def record_out(record: models.Record, user_id: int) -> dict:
         "venue": record.venue,
         "doi": record.doi,
         "abstract": record.abstract,
+        "identifiers": record.identifiers or {},
+        "url": record.url,
         "source": record.search_run.source_label,
         "duplicate_of_id": record.duplicate_of_id,
         "ai_screening": screening
@@ -120,8 +127,45 @@ def run_out(run: models.SearchRun) -> dict:
         "source": run.source_label,
         "query": run.query,
         "result_count": run.result_count,
+        "total_available": run.total_available,
+        "connector": run.connector,
+        "interface": run.interface,
+        "searched_on": run.searched_on,
+        "file_format": run.file_format,
+        "filters": run.filters,
         "executed_at": run.executed_at,
     }
+
+
+def _new_record(project_id: int, result: dict) -> models.Record:
+    return models.Record(
+        project_id=project_id,
+        title=str(result.get("title") or "No Title")[:2000],
+        authors=str(result.get("authors") or "")[:5000],
+        year=str(result.get("year") or "")[:20],
+        venue=str(result.get("venue") or "")[:1000],
+        doi=str(result.get("doi") or "")[:255],
+        external_id=str(result.get("id") or "")[:100],
+        abstract=str(result.get("abstract") or ""),
+        identifiers=result.get("identifiers") or {},
+        url=str(result.get("url") or "")[:1000],
+    )
+
+
+@router.get("/search-sources", include_in_schema=True)
+def search_sources(access: ProjectAccess = Depends(project_access(Permission.VIEW_PROJECT))):
+    """Connectors that can run searches, and databases searched on their own platform and imported."""
+    return catalog()
+
+
+@router.get("/search-runs")
+def list_search_runs(
+    access: ProjectAccess = Depends(project_access(Permission.VIEW_PROJECT)), db: Session = Depends(get_db)
+):
+    runs = db.scalars(
+        select(models.SearchRun).where(models.SearchRun.project_id == access.project.id).order_by(models.SearchRun.id)
+    )
+    return [run_out(run) for run in runs]
 
 
 @router.post("/searches", status_code=status.HTTP_201_CREATED, dependencies=[Depends(ai_rate_limit)])
@@ -130,42 +174,55 @@ async def run_search(
     access: ProjectAccess = Depends(project_access(Permission.RUN_SEARCH)),
     db: Session = Depends(get_db),
 ):
+    """Run a strategy through a search connector, storing every retrieved record and the run's PRISMA-S details."""
     require_stage_open(db, access.project.id, "search")
     strategy = get_in_project(db, models.SearchStrategy, body.strategy_id, access.project.id, "Search strategy")
-    try:
-        if strategy.database.strip().lower() == "pubmed":
-            results = await asyncio.to_thread(search_pubmed, strategy.query, body.limit)
-            source_label = "PubMed"
+    matching = connector_for(strategy.database)
+    if body.connector:
+        connector = CONNECTORS.get(body.connector)
+        if connector is None:
+            raise HTTPException(status_code=422, detail=f"Unknown search connector: {body.connector}")
+    else:
+        connector = matching
+    if connector is None:
+        source = import_only_source(strategy.database)
+        if source is not None:
+            detail = (
+                f"{source.label} can't be searched from OmniReview. Run the strategy on {source.interface}, export "
+                f"the results as {source.export_hint}, and import the file."
+            )
         else:
-            # No native connector yet for this database; label the results as coming from OpenAlex.
-            results = await asyncio.to_thread(search_openalex, strategy.query, body.limit)
-            source_label = f"OpenAlex (no native {strategy.database} connector yet)"
+            detail = (
+                f"There's no search connector for {strategy.database}. Choose a connector to run this search string "
+                "on, or import an export file."
+            )
+        raise HTTPException(status_code=400, detail=detail)
+    try:
+        results, total = await asyncio.to_thread(connector.search, strategy.query, body.limit)
     except SearchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    source_label = (
+        connector.label
+        if matching is not None and matching.key == connector.key
+        else f"{connector.label} (search string written for {strategy.database})"
+    )
     run = models.SearchRun(
         project_id=access.project.id,
         strategy_id=strategy.id,
-        kind="database",
-        database=strategy.database,
+        kind=connector.kind,
+        database=connector.label,
         source_label=source_label,
+        connector=connector.key,
+        interface=connector.interface,
         query=strategy.query,
         result_count=len(results),
+        total_available=total,
+        searched_on=datetime.now(UTC).date().isoformat(),
+        filters={"retrieval_limit": body.limit},
         executed_by_id=access.user.id,
     )
-    run.records = [
-        models.Record(
-            project_id=access.project.id,
-            title=result["title"],
-            authors=result["authors"],
-            year=str(result["year"]),
-            venue=result.get("venue", ""),
-            doi=result["doi"],
-            external_id=str(result["id"])[:100],
-            abstract=result["abstract"],
-        )
-        for result in results
-    ]
+    run.records = [_new_record(access.project.id, result) for result in results]
     db.add(run)
     db.flush()
     record_event(
@@ -176,10 +233,12 @@ async def run_search(
         entity_type="search_run",
         entity_id=run.id,
         details={
+            "connector": connector.key,
             "database": strategy.database,
             "source": source_label,
             "query": strategy.query,
-            "results": len(results),
+            "retrieved": len(results),
+            "total_available": total,
         },
     )
     db.commit()
@@ -215,6 +274,67 @@ def import_records(
     )
     db.commit()
     return run_out(run)
+
+
+@router.post("/imports/file", status_code=status.HTTP_201_CREATED)
+async def import_file(
+    file: UploadFile = File(...),
+    database: str = Form(..., min_length=1, max_length=200),
+    source_type: Literal["database", "register", "other"] = Form("database"),
+    interface: str = Form("", max_length=200),
+    searched_on: str = Form("", max_length=40),
+    query: str = Form("", max_length=20_000),
+    access: ProjectAccess = Depends(project_access(Permission.RUN_SEARCH)),
+    db: Session = Depends(get_db),
+):
+    """Import an export file (RIS, MEDLINE, BibTeX, EndNote XML, Web of Science, or CSV) with its PRISMA-S details."""
+    require_stage_open(db, access.project.id, "search")
+    file_name = (file.filename or "upload")[:200]
+    content = await file.read()
+    try:
+        parsed = await asyncio.to_thread(parse_records, file_name, content)
+    except ImportFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not parsed.records:
+        raise HTTPException(status_code=400, detail=f"No records with a title were found in {file_name}")
+    if len(parsed.records) > MAX_IMPORT_RECORDS:
+        raise HTTPException(
+            status_code=400, detail=f"{file_name} has more than {MAX_IMPORT_RECORDS} records; split the export"
+        )
+
+    run = models.SearchRun(
+        project_id=access.project.id,
+        kind=source_type,
+        database=database.strip(),
+        source_label=f"{database.strip()} export ({file_name})",
+        interface=interface.strip() or None,
+        query=query.strip() or None,
+        searched_on=searched_on.strip() or None,
+        file_format=parsed.format,
+        result_count=len(parsed.records),
+        filters={"file_name": file_name, "entries_without_title": parsed.skipped},
+        executed_by_id=access.user.id,
+    )
+    run.records = [models.Record(project_id=access.project.id, **record) for record in parsed.records]
+    db.add(run)
+    db.flush()
+    record_event(
+        db,
+        project_id=access.project.id,
+        actor_id=access.user.id,
+        action="records.imported",
+        entity_type="search_run",
+        entity_id=run.id,
+        details={
+            "file_name": file_name,
+            "format": parsed.format,
+            "database": run.database,
+            "records": len(parsed.records),
+            "entries_without_title": parsed.skipped,
+        },
+    )
+    db.commit()
+    return {**run_out(run), "skipped": parsed.skipped}
 
 
 @router.get("/records")
@@ -256,6 +376,7 @@ def clear_records(
 def deduplicate_records(
     access: ProjectAccess = Depends(project_access(Permission.RUN_SEARCH)), db: Session = Depends(get_db)
 ):
+    """Mark records that share an identifier, or a title and year, and report pairs a reviewer needs to check."""
     require_stage_open(db, access.project.id, "search")
     records = db.scalars(select(models.Record).where(models.Record.project_id == access.project.id)).all()
     duplicates = find_duplicates(records)
@@ -275,7 +396,8 @@ def deduplicate_records(
             details={"duplicate_record_ids": marked},
         )
     db.commit()
-    return {"duplicates_marked": len(marked)}
+    possible = candidate_pairs(records, reviewed_pairs(db, access.project.id))
+    return {"duplicates_marked": len(marked), "possible_duplicates": len(possible)}
 
 
 @router.get("/prisma")
@@ -292,13 +414,18 @@ def prisma_counts(
     unique_records = [record for record in records if record.duplicate_of_id is None]
     decisions = [final_decision(record) for record in unique_records]
 
+    def identified(*kinds: str) -> int:
+        return sum(run.result_count for run in runs if run.kind in kinds)
+
     by_source: dict[str, int] = {}
     for run in runs:
         by_source[run.source_label] = by_source.get(run.source_label, 0) + run.result_count
 
     return {
-        "identified_from_databases": sum(run.result_count for run in runs if run.kind == "database"),
-        "identified_from_uploads": sum(run.result_count for run in runs if run.kind == "import"),
+        "identified_from_databases": identified("database"),
+        "identified_from_registers": identified("register"),
+        "identified_from_other_methods": identified("other", "citation"),
+        "identified_from_uploads": identified("import"),
         "by_source": by_source,
         "duplicates_removed": len(records) - len(unique_records),
         "screened": len(unique_records),
@@ -403,6 +530,21 @@ def similar_record_pairs(
     }
 
 
+def _mark_as_duplicate(db: Session, record: models.Record, original: models.Record) -> list[int]:
+    """Point the record at its original, moving records that duplicated it along. Returns the ids moved."""
+    if original.id == record.id:
+        raise HTTPException(status_code=422, detail="A record can't be a duplicate of itself")
+    if original.duplicate_of_id is not None:
+        raise HTTPException(
+            status_code=409, detail="That record is itself marked as a duplicate. Choose the record it duplicates."
+        )
+    children = db.scalars(select(models.Record).where(models.Record.duplicate_of_id == record.id)).all()
+    for child in children:
+        child.duplicate_of_id = original.id
+    record.duplicate_of_id = original.id
+    return [child.id for child in children]
+
+
 @router.put("/records/{record_id}/duplicate-of")
 def mark_duplicate(
     record_id: int,
@@ -413,23 +555,13 @@ def mark_duplicate(
     """Mark a record as a duplicate of another, or clear the mark, for duplicates the automatic check can't detect."""
     require_stage_open(db, access.project.id, "search")
     record = get_in_project(db, models.Record, record_id, access.project.id, "Record")
+    previous = record.duplicate_of_id
     moved: list[int] = []
     if body.duplicate_of_id is not None:
-        if body.duplicate_of_id == record.id:
-            raise HTTPException(status_code=422, detail="A record can't be a duplicate of itself")
         original = get_in_project(db, models.Record, body.duplicate_of_id, access.project.id, "Record")
-        if original.duplicate_of_id is not None:
-            raise HTTPException(
-                status_code=409, detail="That record is itself marked as a duplicate. Choose the record it duplicates."
-            )
-        # Records already marked as duplicates of this one now point at the record it duplicates.
-        children = db.scalars(select(models.Record).where(models.Record.duplicate_of_id == record.id)).all()
-        for child in children:
-            child.duplicate_of_id = original.id
-        moved = [child.id for child in children]
-
-    previous = record.duplicate_of_id
-    record.duplicate_of_id = body.duplicate_of_id
+        moved = _mark_as_duplicate(db, record, original)
+    else:
+        record.duplicate_of_id = None
     record_event(
         db,
         project_id=access.project.id,
@@ -441,3 +573,84 @@ def mark_duplicate(
     )
     db.commit()
     return record_out(record, access.user.id)
+
+
+class CandidateDecision(BaseModel):
+    record_id: int
+    other_record_id: int
+    decision: Literal["duplicate", "not_duplicate"]
+    # Required for "duplicate": which of the two records to keep.
+    keep_record_id: int | None = None
+
+
+@router.get("/duplicate-candidates")
+def duplicate_candidates(
+    access: ProjectAccess = Depends(project_access(Permission.VIEW_PROJECT)), db: Session = Depends(get_db)
+):
+    """Pairs of records with very similar titles and close years that a reviewer hasn't decided on."""
+    records = db.scalars(
+        select(models.Record)
+        .where(models.Record.project_id == access.project.id)
+        .options(selectinload(models.Record.search_run))
+    ).all()
+    by_id = {record.id: record for record in records}
+    pairs = candidate_pairs(records, reviewed_pairs(db, access.project.id))
+    return {
+        "pairs": [
+            {
+                "record": _record_brief(by_id[pair.record_id]),
+                "other": _record_brief(by_id[pair.other_id]),
+                "score": pair.score,
+                "reasons": pair.reasons,
+            }
+            for pair in pairs
+        ]
+    }
+
+
+@router.post("/duplicate-candidates/decision")
+def decide_duplicate_candidate(
+    body: CandidateDecision,
+    access: ProjectAccess = Depends(project_access(Permission.RUN_SEARCH)),
+    db: Session = Depends(get_db),
+):
+    require_stage_open(db, access.project.id, "search")
+    if body.record_id == body.other_record_id:
+        raise HTTPException(status_code=422, detail="Choose two different records")
+    record = get_in_project(db, models.Record, body.record_id, access.project.id, "Record")
+    other = get_in_project(db, models.Record, body.other_record_id, access.project.id, "Record")
+    first_id, second_id = sorted((record.id, other.id))
+    details: dict = {"record_id": first_id, "other_record_id": second_id, "decision": body.decision}
+    if body.decision == "duplicate":
+        if body.keep_record_id not in (record.id, other.id):
+            raise HTTPException(status_code=422, detail="Choose which of the two records to keep")
+        kept, duplicate = (record, other) if body.keep_record_id == record.id else (other, record)
+        if kept.duplicate_of_id is not None or duplicate.duplicate_of_id is not None:
+            raise HTTPException(status_code=409, detail="One of these records is already marked as a duplicate")
+        details["kept_record_id"] = kept.id
+        details["also_moved"] = _mark_as_duplicate(db, duplicate, kept)
+
+    review = db.scalar(
+        select(models.DuplicateReview).where(
+            models.DuplicateReview.project_id == access.project.id,
+            models.DuplicateReview.record_id == first_id,
+            models.DuplicateReview.other_record_id == second_id,
+        )
+    ) or models.DuplicateReview(project_id=access.project.id, record_id=first_id, other_record_id=second_id)
+    review.decision, review.reviewer_id, review.created_at = body.decision, access.user.id, models.utcnow()
+    db.add(review)
+    db.flush()
+    record_event(
+        db,
+        project_id=access.project.id,
+        actor_id=access.user.id,
+        action="duplicates.reviewed",
+        entity_type="record",
+        entity_id=first_id,
+        details=details,
+    )
+    db.commit()
+    return {
+        "decision": body.decision,
+        "records": [record_out(record, access.user.id), record_out(other, access.user.id)],
+    }
