@@ -3,6 +3,7 @@ import { useAuth } from './auth/authContext';
 import { RequireAuth } from './auth/RequireAuth';
 import { RiskOfBiasScreen } from './features/appraisal/RiskOfBiasScreen';
 import { ExtractionScreen } from './features/extraction/ExtractionScreen';
+import { FullTextScreen } from './features/fulltext/FullTextScreen';
 import { PrismaScreen } from './features/prisma/PrismaScreen';
 import { ProjectRoute } from './features/project/ProjectLayout';
 import { ExtractionFieldsScreen } from './features/protocol/ExtractionFieldsScreen';
@@ -51,6 +52,7 @@ function App() {
           <Route path="other-sources" element={<OtherSourcesScreen />} />
           <Route path="deduplication" element={<DeduplicationScreen />} />
           <Route path="screening" element={<ScreeningScreen />} />
+          <Route path="full-texts" element={<FullTextScreen />} />
           <Route path="extraction-fields" element={<ExtractionFieldsScreen />} />
           <Route path="extraction" element={<ExtractionScreen />} />
           <Route path="prisma" element={<PrismaScreen />} />

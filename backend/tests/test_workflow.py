@@ -266,6 +266,8 @@ def test_deduplication_and_prisma_counts_come_from_stored_data(client, project, 
         "excluded": 0,
         "included": 0,
         "awaiting_decision": 2,
+        "reports_sought_for_retrieval": 0,
+        "reports_not_retrieved": 0,
     }
 
 

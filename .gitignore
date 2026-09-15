@@ -29,6 +29,8 @@ dist-ssr
 !.env.example
 *.db
 *.sqlite3
+# Uploaded and retrieved full texts (DOCUMENT_STORAGE_DIR's default)
+backend/storage/
 
 # Python
 venv/

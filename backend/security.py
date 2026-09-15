@@ -2,9 +2,15 @@
 
 import json
 import os
+import re
 
 # Large enough for a CSV import of a few thousand records with abstracts.
 MAX_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(10 * 1024 * 1024)))
+# Full-text files (uploaded or downloaded) can be larger; only the document upload route accepts bodies this big.
+MAX_DOCUMENT_BYTES = int(os.getenv("MAX_DOCUMENT_BYTES", str(50 * 1024 * 1024)))
+_DOCUMENT_UPLOAD_PATH = re.compile(r"/api/projects/\d+/records/\d+/documents")
+# Room for the multipart form around the file.
+_MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
 _API_SECURITY_HEADERS = [
     (b"x-content-type-options", b"nosniff"),
@@ -50,8 +56,12 @@ class BodySizeLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
+        max_bytes = self.max_bytes
+        if _DOCUMENT_UPLOAD_PATH.fullmatch(scope["path"]):
+            max_bytes = max(max_bytes, MAX_DOCUMENT_BYTES + _MULTIPART_OVERHEAD_BYTES)
+
         declared = dict(scope["headers"]).get(b"content-length", b"")
-        if declared.isdigit() and int(declared) > self.max_bytes:
+        if declared.isdigit() and int(declared) > max_bytes:
             await self._reject(send)
             return
 
@@ -63,7 +73,7 @@ class BodySizeLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.max_bytes:
+                if received > max_bytes:
                     raise _BodyTooLarge
             return message
 

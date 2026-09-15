@@ -24,6 +24,8 @@ export function PrismaScreen() {
           <li>Excluded by a reviewer at abstract screening: {prisma?.excluded ?? 0}</li>
           <li>Included by a reviewer: {prisma?.included ?? 0}</li>
           <li>Awaiting a reviewer decision: {prisma?.awaiting_decision ?? 0}</li>
+          <li>Reports sought for retrieval: {prisma?.reports_sought_for_retrieval ?? 0}</li>
+          <li>Reports not retrieved: {prisma?.reports_not_retrieved ?? 0}</li>
         </ul>
       </div>
       <div style={{ textAlign: 'center', marginTop: '32px' }}>

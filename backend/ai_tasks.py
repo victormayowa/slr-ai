@@ -20,6 +20,7 @@ import models
 from ai_access import new_ai_run, project_ai, project_embedding_ai, record_usage
 from audit import record_event
 from database import SessionLocal
+from documents import require_documents_open, retrieve_full_texts
 from llm.prompts import APPRAISAL_PROMPT, EXTRACTION_PROMPT, SCREENING_PROMPT, PromptTemplate
 from llm.runner import AIContext, AIResult, embed
 from permissions import Permission, has_permission
@@ -45,6 +46,7 @@ TASK_PERMISSIONS = {
     "extraction": Permission.EXTRACT,
     "appraisal": Permission.APPRAISE,
     "embedding": Permission.RUN_SEARCH,
+    "fulltext": Permission.EXTRACT,
 }
 # The workflow stage each record task changes. Embeddings are derived data and don't depend on a stage.
 TASK_STAGES = {"screening": "screening", "extraction": "extraction", "appraisal": "appraisal"}
@@ -338,6 +340,15 @@ async def run_job(job_id: int) -> str:
                 ).all()
                 job.total = len(records)
                 await embed_records(db, access, job, list(records))
+            elif job.task == "fulltext":
+                require_documents_open(db, job.project_id)
+                records = [
+                    record
+                    for record in load_records(db, job.project_id, job.record_ids)
+                    if record.duplicate_of_id is None
+                ]
+                job.total = len(records)
+                await retrieve_full_texts(db, access, job, records)
             else:
                 require_stage_open(db, job.project_id, TASK_STAGES[job.task])
                 records = load_records(db, job.project_id, job.record_ids)

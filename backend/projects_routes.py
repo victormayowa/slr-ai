@@ -15,6 +15,7 @@ from auth_routes import get_current_user
 from database import Base, get_db
 from permissions import Permission, ProjectRole, has_permission
 from project_defaults import apply_project_defaults
+from storage import document_storage
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -254,8 +255,10 @@ def set_project_embedding_model(
 def delete_project(
     access: ProjectAccess = Depends(project_access(Permission.DELETE_PROJECT)), db: Session = Depends(get_db)
 ):
+    project_id = access.project.id
     db.delete(access.project)
     db.commit()
+    document_storage().delete_project(project_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

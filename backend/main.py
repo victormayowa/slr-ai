@@ -18,6 +18,7 @@ from audit_routes import router as audit_router
 from auth_routes import get_current_user
 from auth_routes import router as auth_router
 from database import engine, get_db
+from documents_routes import router as documents_router
 from jobs_routes import router as jobs_router
 from observability import RequestIdMiddleware, configure_logging, configure_sentry
 from other_sources_routes import router as other_sources_router
@@ -93,6 +94,7 @@ app.include_router(registration_router)
 app.include_router(search_quality_router)
 app.include_router(vocabulary_router)
 app.include_router(other_sources_router)
+app.include_router(documents_router)
 
 
 @app.exception_handler(TaskNotReady)

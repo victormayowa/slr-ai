@@ -4,6 +4,7 @@ run. The environment is set before the app is imported, so tests never touch dev
 import base64
 import hashlib
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,8 @@ os.environ["SENTRY_DSN"] = ""
 os.environ["REDIS_URL"] = ""
 os.environ["BCRYPT_ROUNDS"] = "4"
 os.environ["LLM_BACKOFF_SECONDS"] = "0"
+os.environ["DOCUMENT_STORAGE_DIR"] = tempfile.mkdtemp(prefix="omnireview-test-documents-")
+os.environ["UNPAYWALL_EMAIL"] = "tests@example.org"
 for provider_spec in PROVIDERS.values():
     os.environ[provider_spec.api_key_env] = ""
 

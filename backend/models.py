@@ -682,3 +682,85 @@ class CitationLink(Base):
     record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"))
     # "backward" (a reference of the seed) or "forward" (cites the seed)
     direction: Mapped[str] = mapped_column(String(10))
+
+
+class Document(Base):
+    """A full text or supplementary file for a record. The file is stored privately to the project (storage.py)."""
+
+    __tablename__ = "documents"
+    __table_args__ = (UniqueConstraint("record_id", "sha256", name="uq_document_record_file"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"), index=True)
+    # "full_text" or "supplement"
+    role: Mapped[str] = mapped_column(String(20))
+    # "europepmc", "unpaywall", or "upload"
+    origin: Mapped[str] = mapped_column(String(20))
+    source_url: Mapped[str] = mapped_column(String(1000), default="", server_default="")
+    file_name: Mapped[str] = mapped_column(String(255))
+    media_type: Mapped[str] = mapped_column(String(100))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(String(255))
+    # As reported by the source, such as "cc-by"; empty when unknown.
+    license: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    # Unpaywall's open-access status ("gold", "green", "hybrid", "bronze") and copy version ("publishedVersion"...).
+    oa_status: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    version: Mapped[str] = mapped_column(String(40), default="", server_default="")
+    # "pending", "parsed", "failed" (for example a scanned PDF), or "unsupported" (stored but not read)
+    parse_status: Mapped[str] = mapped_column(String(20))
+    parse_error: Mapped[str | None] = mapped_column(Text)
+    parser: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    page_count: Mapped[int | None] = mapped_column(Integer)
+    uploaded_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    parsed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    record: Mapped[Record] = relationship()
+    uploaded_by: Mapped[User | None] = relationship()
+    spans: Mapped[list["DocumentSpan"]] = relationship(
+        back_populates="document", cascade="all, delete-orphan", order_by="DocumentSpan.position", passive_deletes=True
+    )
+
+
+class DocumentSpan(Base):
+    """A passage of a parsed document (heading, paragraph, table, caption, or reference) and where it appears.
+
+    Offsets refer to the document's plain text: its span texts joined by document_parsing.SPAN_SEPARATOR.
+    """
+
+    __tablename__ = "document_spans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(20))
+    section: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    page: Mapped[int | None] = mapped_column(Integer)
+    label: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    text: Mapped[str] = mapped_column(Text)
+    start_offset: Mapped[int] = mapped_column(Integer)
+    end_offset: Mapped[int] = mapped_column(Integer)
+
+    document: Mapped[Document] = relationship(back_populates="spans")
+
+
+class FullTextRetrieval(Base):
+    """One search for an open-access full text of a record, with what each source returned (PRISMA "reports sought")."""
+
+    __tablename__ = "fulltext_retrievals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"), index=True)
+    # "found", "already_stored", or "not_found"
+    status: Mapped[str] = mapped_column(String(20))
+    # [{"source": ..., "outcome": "found" | "not_found" | "skipped" | "error", "detail": ...}]
+    attempts: Mapped[list[dict[str, str]]] = mapped_column(JSONB)
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"))
+    requested_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    document: Mapped[Document | None] = relationship()
+    requested_by: Mapped[User | None] = relationship()

@@ -21,6 +21,7 @@ from review_data import TITLE_ABSTRACT, final_decision, latest_run
 from search_sources import CONNECTORS, MAX_RESULTS, catalog, connector_for, import_only_source
 from services.errors import SearchError
 from services.record_import import ImportFormatError, parse_records
+from storage import document_storage
 from workflow import require_stage_open
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["records"])
@@ -359,6 +360,9 @@ def clear_records(
     record_count = db.scalar(
         select(func.count()).select_from(models.Record).where(models.Record.project_id == access.project.id)
     )
+    storage_keys = list(
+        db.scalars(select(models.Document.storage_key).where(models.Document.project_id == access.project.id))
+    )
     # Records, their AI runs, suggestions, and decisions are removed by ON DELETE CASCADE.
     db.execute(delete(models.SearchRun).where(models.SearchRun.project_id == access.project.id))
     record_event(
@@ -368,9 +372,12 @@ def clear_records(
         action="records.cleared",
         entity_type="project",
         entity_id=access.project.id,
-        details={"records_deleted": record_count},
+        details={"records_deleted": record_count, "documents_deleted": len(storage_keys)},
     )
     db.commit()
+    storage = document_storage()
+    for key in storage_keys:
+        storage.delete(key)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -415,6 +422,14 @@ def prisma_counts(
     ).all()
     unique_records = [record for record in records if record.duplicate_of_id is None]
     decisions = [final_decision(record) for record in unique_records]
+    sought = {record.id for record, decision in zip(unique_records, decisions, strict=True) if decision == "include"}
+    retrieved = set(
+        db.scalars(
+            select(models.Document.record_id).where(
+                models.Document.project_id == access.project.id, models.Document.role == "full_text"
+            )
+        )
+    )
 
     def identified(*kinds: str) -> int:
         return sum(run.result_count for run in runs if run.kind in kinds)
@@ -438,6 +453,8 @@ def prisma_counts(
         "excluded": decisions.count("exclude"),
         "included": decisions.count("include"),
         "awaiting_decision": sum(1 for decision in decisions if decision in (None, "undecided")),
+        "reports_sought_for_retrieval": len(sought),
+        "reports_not_retrieved": len(sought - retrieved),
     }
 
 
@@ -468,7 +485,7 @@ _SIMILAR_PAIRS_SQL = text(
 )
 
 
-def _record_brief(record: models.Record) -> dict:
+def record_brief(record: models.Record) -> dict:
     return {
         "id": record.id,
         "title": record.title,
@@ -527,8 +544,8 @@ def similar_record_pairs(
         "unique_records": unique or 0,
         "pairs": [
             {
-                "record": _record_brief(records[row.record_id]),
-                "other": _record_brief(records[row.other_id]),
+                "record": record_brief(records[row.record_id]),
+                "other": record_brief(records[row.other_id]),
                 "similarity": round(float(row.similarity), 4),
             }
             for row in rows
@@ -604,8 +621,8 @@ def duplicate_candidates(
     return {
         "pairs": [
             {
-                "record": _record_brief(by_id[pair.record_id]),
-                "other": _record_brief(by_id[pair.other_id]),
+                "record": record_brief(by_id[pair.record_id]),
+                "other": record_brief(by_id[pair.other_id]),
                 "score": pair.score,
                 "reasons": pair.reasons,
             }

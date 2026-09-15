@@ -192,6 +192,49 @@ describe('App routing', () => {
     expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ query: 'Aspirin review', reviewers: 2 });
   });
 
+  it('lists full texts, explains missing ones, and shows parsed passages', async () => {
+    const doc = {
+      id: 5, record_id: 11, role: 'full_text', origin: 'europepmc', source_url: '', file_name: 'PMC1.xml', media_type: 'application/xml',
+      size_bytes: 2048, sha256: 'abc', license: 'cc-by', oa_status: '', version: '', parse_status: 'parsed', parse_error: null,
+      parser: 'jats/v1', page_count: null, span_count: 2, uploaded_by: null, created_at: '2026-09-15T00:00:00Z', parsed_at: '2026-09-15T00:00:00Z',
+    };
+    const brief = (id: number, title: string, doi: string) => ({ id, title, authors: '', year: '2019', doi, source: 'PubMed' });
+    mockApi({
+      'POST /api/auth/login': LOGIN,
+      ...WORKSPACE_API,
+      'GET /api/projects/7/full-texts': {
+        records: [
+          { record: brief(11, 'Low-dose aspirin trial', '10.1/a'), final_decision: 'include', documents: [doc], latest_retrieval: null },
+          {
+            record: brief(12, 'Statin trial', ''), final_decision: 'include', documents: [],
+            latest_retrieval: {
+              id: 2, record_id: 12, status: 'not_found', document_id: null, requested_by: 'Liam Lead', created_at: '2026-09-15T00:00:00Z',
+              attempts: [{ source: 'europepmc', outcome: 'skipped', detail: 'The record has no DOI, PMID, or PMCID' }],
+            },
+          },
+        ],
+        counts: { sought: 2, retrieved: 1, not_retrieved: 1 },
+        max_document_bytes: 52428800,
+        unpaywall_configured: true,
+      },
+      'GET /api/projects/7/documents/5': {
+        ...doc,
+        spans: [
+          { id: 1, position: 0, kind: 'heading', section: 'Methods', page: null, label: '', text: 'Methods', start: 0, end: 7 },
+          { id: 2, position: 1, kind: 'paragraph', section: 'Methods', page: null, label: '', text: 'We randomized 120 adults.', start: 9, end: 34 },
+        ],
+      },
+    });
+    renderApp('/projects/7/full-texts');
+
+    signIn();
+
+    expect(await screen.findByText(/Europe PMC: The record has no DOI, PMID, or PMCID/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'View passages' }));
+    expect(await screen.findByText('We randomized 120 adults.')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Passages of PMC1.xml' })).toBeTruthy();
+  });
+
   it('explains when a project cannot be opened', async () => {
     mockApi({ 'POST /api/auth/login': LOGIN });
     renderApp('/projects/7/setup');
