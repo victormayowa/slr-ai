@@ -21,29 +21,32 @@ from sqlalchemy.orm import Session, selectinload
 
 import models
 from ai_access import new_ai_run, project_ai, project_embedding_ai, record_usage
+from appraisal_tools import ANSWER_SETS, JUDGMENT_SETS, TOOLS
 from audit import record_event
 from database import SessionLocal
 from documents import best_full_texts, document_passages, require_documents_open, retrieve_full_texts
 from extraction_data import included_records, project_fields
 from extraction_values import parse_suggestion
 from llm.grounding import Passage, locate_quote, quote_is_grounded, select_passages
-from llm.prompts import APPRAISAL_PROMPT, EXTRACTION_PROMPT, SCREENING_PROMPT, PromptTemplate
+from llm.prompts import APPRAISAL_PROMPT, EXTRACTION_PROMPT, REPORTING_PROMPT, SCREENING_PROMPT, PromptTemplate
 from llm.runner import AIContext, AIResult, embed
 from permissions import Permission, has_permission
 from projects_routes import ProjectAccess
 from records_routes import with_record_details
+from reporting_checklists import CHECKLISTS, STATUSES
 from review_data import FULL_TEXT, TITLE_ABSTRACT
 from review_settings import review_policy
+from services.ai_appraisal import AppraisalOutput, ReportingOutput, suggest_appraisal, suggest_reporting
 from services.ai_screening import (
     CriterionPrompt,
     Eligibility,
     FieldPrompt,
     StudyExtractionOutput,
-    assess_risk_of_bias,
     evaluate_eligibility,
     extract_study_data,
 )
 from services.errors import LLMError
+from statistics_jobs import process_analysis_runs
 from workflow import WorkflowError, require_stage_open
 
 logger = logging.getLogger(__name__)
@@ -57,6 +60,8 @@ TASK_PERMISSIONS = {
     "fulltext_screening": Permission.SCREEN,
     "extraction": Permission.EXTRACT,
     "appraisal": Permission.APPRAISE,
+    "reporting": Permission.APPRAISE,
+    "statistics": Permission.RUN_ANALYSIS,
     "embedding": Permission.RUN_SEARCH,
     "fulltext": Permission.EXTRACT,
 }
@@ -66,6 +71,8 @@ TASK_STAGES = {
     "fulltext_screening": "full_text_screening",
     "extraction": "extraction",
     "appraisal": "appraisal",
+    "reporting": "appraisal",
+    "statistics": "synthesis",
 }
 # Recorded as the prompt version of embedding runs; change it whenever paper_text changes.
 EMBEDDING_TEXT_VERSION = "embedding-text-v1"
@@ -192,26 +199,9 @@ def _prepare_full_text_screening(db: Session, access: ProjectAccess, records: li
     return PreparedTask(ai, SCREENING_PROMPT, call, _screening_store(FULL_TEXT, documents))
 
 
-def _prepare_appraisal(db: Session, access: ProjectAccess, records: list[models.Record]) -> PreparedTask:
-    if access.project.protocol is None:
-        raise TaskNotReady("This project has no protocol", status_code=404)
-    tool = access.project.protocol.rob_tool
-    _require_included(db, access.project.id, records)
-    ai = project_ai(db, access)
-
-    async def call(record: models.Record) -> AIResult[dict[str, str]]:
-        return await assess_risk_of_bias(ai, paper_text(record), tool)
-
-    def store(run: models.AIRun, judgments: dict[str, str]) -> None:
-        run.appraisal = models.AppraisalSuggestion(tool=tool, judgments=judgments)
-
-    return PreparedTask(ai, APPRAISAL_PROMPT, call, store)
-
-
 _PREPARERS = {
     "screening": _prepare_screening,
     "fulltext_screening": _prepare_full_text_screening,
-    "appraisal": _prepare_appraisal,
 }
 
 
@@ -293,24 +283,7 @@ def prepare_extraction(db: Session, access: ProjectAccess, studies: list[models.
     if not_included:
         raise TaskNotReady(f"Only studies included in the review can be extracted: {not_included[:20]}")
     ai = project_ai(db, access)
-    record_ids = [report.record_id for study in studies for report in study.reports]
-    documents = best_full_texts(db, record_ids)
-    passages = document_passages(db, [document.id for document in documents.values()])
-    contexts = {}
-    for study in studies:
-        reports = sorted(study.reports, key=lambda report: (not report.is_primary, report.id))
-        study_passages = [
-            passage
-            for report in reports
-            if report.record_id in documents
-            for passage in passages[documents[report.record_id].id]
-        ]
-        contexts[study.id] = StudyContext(
-            select_passages(study_passages, FULL_TEXT_MAX_CHARS),
-            "\n\n".join(paper_text(report.record) for report in reports),
-            reports[0].record_id,
-        )
-    return PreparedExtraction(ai, fields, contexts)
+    return PreparedExtraction(ai, fields, build_study_contexts(db, studies))
 
 
 def store_extraction(
@@ -564,6 +537,14 @@ async def run_job(job_id: int) -> str:
                 ]
                 job.total = len(records)
                 await retrieve_full_texts(db, access, job, records)
+            elif job.task in ("appraisal", "reporting"):
+                require_stage_open(db, job.project_id, "appraisal")
+                # For these jobs, record_ids holds assessment ids.
+                await process_assessments(db, access, job, job.task, job.record_ids)
+            elif job.task == "statistics":
+                require_stage_open(db, job.project_id, "synthesis")
+                # For statistics jobs, record_ids holds analysis run ids.
+                await process_analysis_runs(db, access, job, job.record_ids)
             elif job.task == "extraction":
                 require_stage_open(db, job.project_id, "extraction")
                 # For extraction jobs, record_ids holds study ids.
@@ -587,3 +568,176 @@ async def run_job(job_id: int) -> str:
         job.finished_at = models.utcnow()
         db.commit()
         return job.status
+
+
+def build_study_contexts(db: Session, studies: list[models.Study]) -> dict[int, StudyContext]:
+    """Each study's full-text passages (primary report first, within the size limit) and its reports' abstracts."""
+    record_ids = [report.record_id for study in studies for report in study.reports]
+    documents = best_full_texts(db, record_ids)
+    passages = document_passages(db, [document.id for document in documents.values()])
+    contexts = {}
+    for study in studies:
+        reports = sorted(study.reports, key=lambda report: (not report.is_primary, report.id))
+        study_passages = [
+            passage
+            for report in reports
+            if report.record_id in documents
+            for passage in passages[documents[report.record_id].id]
+        ]
+        contexts[study.id] = StudyContext(
+            select_passages(study_passages, FULL_TEXT_MAX_CHARS),
+            "\n\n".join(paper_text(report.record) for report in reports),
+            reports[0].record_id,
+        )
+    return contexts
+
+
+# --- Appraisal and reporting checklists, per assessment ---
+
+
+def _evidence(context: StudyContext, quote: str | None, passage_id: int | None) -> tuple[bool, list[int]]:
+    if not quote:
+        return False, []
+    if context.passages:
+        span_id = locate_quote(quote, context.passages, [passage_id] if passage_id is not None else [])
+        return span_id is not None, [span_id] if span_id is not None else []
+    return quote_is_grounded(quote, context.abstract_text), []
+
+
+def store_appraisal(
+    db: Session,
+    run: models.AIRun,
+    assessment: models.AppraisalAssessment,
+    context: StudyContext,
+    output: AppraisalOutput,
+) -> None:
+    """Keep AI answers that use the tool's own answer options, with whether their quotes were found in the text."""
+    tool = TOOLS[assessment.tool]
+    for item in output.answers:
+        question = tool.question(item.question_id)
+        if question is None or item.answer not in dict(ANSWER_SETS[question.answers]):
+            continue
+        quote = (item.quote or "").strip() or None
+        grounded, spans = _evidence(context, quote, item.passage_id)
+        db.add(
+            models.AppraisalAISuggestion(
+                ai_run_id=run.id,
+                assessment_id=assessment.id,
+                question_id=item.question_id,
+                answer=item.answer,
+                rationale=item.rationale.strip(),
+                quote=quote,
+                span_ids=spans,
+                grounded=grounded,
+            )
+        )
+    for judged in output.domains:
+        domain = tool.domain(judged.domain)
+        if domain is None or judged.judgment not in dict(JUDGMENT_SETS[domain.judgments]):
+            continue
+        db.add(
+            models.AppraisalAISuggestion(
+                ai_run_id=run.id,
+                assessment_id=assessment.id,
+                domain=judged.domain,
+                answer=judged.judgment,
+                rationale=judged.rationale.strip(),
+            )
+        )
+
+
+def store_reporting(
+    db: Session,
+    run: models.AIRun,
+    assessment: models.ReportingAssessment,
+    context: StudyContext,
+    output: ReportingOutput,
+) -> None:
+    valid = {item_id for item_id, _, _ in CHECKLISTS[assessment.checklist].items}
+    rows = {row.item_id: row for row in assessment.items}
+    for item in output.items:
+        if item.item_id not in valid or item.status not in STATUSES:
+            continue
+        row = rows.get(item.item_id)
+        if row is None:
+            row = models.ReportingItem(item_id=item.item_id)
+            assessment.items.append(row)
+            rows[item.item_id] = row
+        quote = (item.quote or "").strip() or None
+        grounded, spans = _evidence(context, quote, item.passage_id)
+        row.ai_status, row.ai_rationale, row.ai_quote = item.status, item.rationale.strip(), quote
+        row.ai_grounded, row.ai_run_id = (grounded if quote else None), run.id
+        if not row.status and spans:
+            row.span_ids = spans
+
+
+async def process_assessments(db: Session, access: ProjectAccess, job: models.AIJob, kind: str, ids: list[int]) -> None:
+    """Background job: AI suggestions for appraisal tool questions or reporting checklist items, per assessment."""
+    assessments: list[models.AppraisalAssessment | models.ReportingAssessment]
+    if kind == "appraisal":
+        appraisal = models.AppraisalAssessment
+        query = select(appraisal).where(appraisal.project_id == access.project.id, appraisal.id.in_(ids))
+        assessments = list(db.scalars(query.order_by(appraisal.id)))
+    else:
+        reporting = models.ReportingAssessment
+        reporting_query = select(reporting).where(reporting.project_id == access.project.id, reporting.id.in_(ids))
+        assessments = list(db.scalars(reporting_query.order_by(reporting.id)))
+    job.total = len(assessments)
+    db.commit()
+    ai = project_ai(db, access)
+    studies = load_studies(db, access.project.id, sorted({a.study_id for a in assessments}))
+    contexts = build_study_contexts(db, studies)
+    prompt = APPRAISAL_PROMPT if kind == "appraisal" else REPORTING_PROMPT
+    for start in range(0, len(assessments), CHUNK_SIZE):
+        chunk = assessments[start : start + CHUNK_SIZE]
+        calls: list[Awaitable[AIResult[Any]]] = []
+        for a in chunk:
+            context = contexts[a.study_id]
+            if isinstance(a, models.AppraisalAssessment):
+                calls.append(suggest_appraisal(ai, TOOLS[a.tool], a.outcome, context.passages, context.abstract_text))
+            else:
+                calls.append(suggest_reporting(ai, CHECKLISTS[a.checklist], context.passages, context.abstract_text))
+        outcomes = await asyncio.gather(*calls, return_exceptions=True)
+        for assessment, outcome in zip(chunk, outcomes, strict=True):
+            context = contexts[assessment.study_id]
+            run = new_ai_run(access, kind, prompt, ai)
+            run.study_id, run.record_id = assessment.study_id, context.primary_record_id
+            db.add(run)
+            if isinstance(outcome, LLMError):
+                run.status, run.error = "failed", str(outcome)
+                record_usage(run, ai, outcome.usage)
+                job.failed += 1
+            elif isinstance(outcome, Exception):
+                logger.error("Unexpected error during AI %s", kind, exc_info=outcome)
+                run.status, run.error = "failed", "Unexpected server error while processing this assessment"
+                job.failed += 1
+            elif isinstance(outcome, BaseException):
+                raise outcome
+            else:
+                run.status = "succeeded"
+                record_usage(run, ai, outcome.usage)
+                db.flush()
+                if isinstance(assessment, models.AppraisalAssessment) and isinstance(outcome.value, AppraisalOutput):
+                    store_appraisal(db, run, assessment, context, outcome.value)
+                elif isinstance(assessment, models.ReportingAssessment) and isinstance(outcome.value, ReportingOutput):
+                    store_reporting(db, run, assessment, context, outcome.value)
+        job.processed += len(chunk)
+        db.commit()
+
+    record_event(
+        db,
+        project_id=access.project.id,
+        actor_id=access.user.id,
+        action=f"ai.{kind}",
+        entity_type="ai_job",
+        entity_id=job.id,
+        details={
+            "provider": ai.provider.id,
+            "model": ai.model,
+            "prompt_version": prompt.id,
+            "key_source": ai.key_source,
+            "assessment_ids": [a.id for a in assessments],
+            "failed": job.failed,
+        },
+    )
+    db.commit()

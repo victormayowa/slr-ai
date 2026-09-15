@@ -79,15 +79,6 @@ async def start_extraction_job(
     return job_out(job)
 
 
-@router.post("/appraisal/ai", status_code=202, dependencies=[Depends(ai_rate_limit)])
-async def start_appraisal_job(
-    body: AIBatchRequest,
-    access: ProjectAccess = Depends(project_access(Permission.APPRAISE)),
-    db: Session = Depends(get_db),
-):
-    return await _start_record_job(db, access, "appraisal", body.record_ids)
-
-
 @router.post("/embeddings", status_code=202, dependencies=[Depends(ai_rate_limit)])
 async def start_embedding_job(
     access: ProjectAccess = Depends(project_access(Permission.RUN_SEARCH)), db: Session = Depends(get_db)

@@ -57,9 +57,6 @@ export function useProjectWorkspaceState(projectId: number) {
 
 
   const [robTool, setRobTool] = useState('ROB-2');
-  const [robLoading, setRobLoading] = useState(false);
-  const [robComplete, setRobComplete] = useState(false);
-  const [robProgress, setRobProgress] = useState<number | null>(null);
 
   const [metaLoading, setMetaLoading] = useState(false);
   const [metaReport, setMetaReport] = useState<string | null>(null);
@@ -114,7 +111,6 @@ export function useProjectWorkspaceState(projectId: number) {
         setMetaReport(synthesis?.content ?? null);
         setLiteratureResults(papers);
         setPrisma(counts);
-        setRobComplete(papers.some(p => p.rob_data));
         setWorkflow(stages);
         setAiModels(models);
         setEmbeddingModels(embeddingModelList);
@@ -157,7 +153,6 @@ export function useProjectWorkspaceState(projectId: number) {
     const papers = (records as ApiRecord[]).map(toPaper);
     setLiteratureResults(papers);
     setPrisma(counts);
-    setRobComplete(papers.some(p => p.rob_data));
     await loadWorkflow();
   };
 
@@ -236,19 +231,6 @@ export function useProjectWorkspaceState(projectId: number) {
     waitForJob(job, id => apiRequest('GET', projectPath(`jobs/${id}`)), update => onProgress(jobProgress(update)), {
       stopped: () => unmounted.current,
     });
-
-  // Starts a background AI job for the records, follows its progress, then reloads the stored results.
-  const runAiJob = async (endpoint: string, ids: number[], label: string, onProgress: (percent: number) => void) => {
-    try {
-      const job = await followJob(await apiPost(projectPath(endpoint), { record_ids: ids }), onProgress);
-      if (unmounted.current) return;
-      await refreshRecords();
-      const problem = jobProblem(job, label);
-      if (problem) alert(problem);
-    } catch (err) {
-      alert(errorMessage(err, `${label} could not be started.`));
-    }
-  };
 
   // Only a reviewer's decision moves a paper forward; AI suggestions never do.
   const humanIncludedPapers = () => literatureResults.filter(p => p.user_decision === 'Include');
@@ -404,33 +386,9 @@ export function useProjectWorkspaceState(projectId: number) {
     }
   };
 
-  const handleRobToolChange = async (tool: string) => {
-    setRobTool(tool);
-    try {
-      await saveProtocol({ rob_tool: tool });
-    } catch (err) {
-      alert(errorMessage(err, 'Could not save the assessment tool.'));
-    }
-  };
-
-  const handleRunRob = async () => {
-    const includedPapers = humanIncludedPapers();
-    if (includedPapers.length === 0) {
-      alert("Accept at least one paper in Abstract Screening before running a risk of bias assessment.");
-      return;
-    }
-    setRobLoading(true);
-    setRobProgress(0);
-    const ids = includedPapers.slice(0, 10).map(p => Number(p.id));
-    await runAiJob('appraisal/ai', ids, 'Risk of bias assessment', setRobProgress);
-    setRobComplete(true);
-    setRobLoading(false);
-    setTimeout(() => setRobProgress(null), 2000);
-  };
-
   const handleRunMetaAnalysis = async () => {
     if (humanIncludedPapers().length === 0) {
-      alert("Accept at least one paper in Abstract Screening before generating a synthesis.");
+      alert("Include at least one study before writing a narrative summary.");
       return;
     }
     setMetaLoading(true);
@@ -482,10 +440,6 @@ export function useProjectWorkspaceState(projectId: number) {
     dedupLoading,
     dedupVersion,
     refreshRecords,
-    robTool,
-    robLoading,
-    robComplete,
-    robProgress,
     metaLoading,
     metaReport,
     prisma,
@@ -505,8 +459,6 @@ export function useProjectWorkspaceState(projectId: number) {
     reloadStrategies,
     handleRunDedup,
     handleResetSearch,
-    handleRobToolChange,
-    handleRunRob,
     handleRunMetaAnalysis,
   };
 }

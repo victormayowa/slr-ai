@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 
 from llm.grounding import Passage, format_passages, locate_quote, quote_is_grounded
 from llm.prompts import (
-    APPRAISAL_PROMPT,
     ENTITY_PROMPT,
     EXTRACTION_PROMPT,
     FAQ_PROMPT,
@@ -241,35 +240,6 @@ async def extract_study_data(
         ),
     )
     return await complete_structured(ai, prompt, StudyExtractionOutput, max_tokens=8000)
-
-
-# --- Appraisal ---
-
-
-class DomainJudgment(BaseModel):
-    domain: str
-    judgment: Literal["Low", "High", "Unclear"]
-    rationale: str = ""
-
-
-class AppraisalOutput(BaseModel):
-    domains: list[DomainJudgment]
-    overall: Literal["Low Risk", "High Risk", "Some Concerns"]
-
-
-async def assess_risk_of_bias(ai: AIContext, paper_text: str, tool: str) -> AIResult[dict[str, str]]:
-    domains = ROB_TOOL_DOMAINS.get(tool)
-    if domains is None:
-        raise ValueError(f"Unsupported risk of bias tool: {tool}")
-
-    prompt = APPRAISAL_PROMPT.render(tool=tool, paper=paper_text, domains="\n".join(f"- {d}" for d in domains))
-    result = await complete_structured(ai, prompt, AppraisalOutput, max_tokens=4000)
-    judged: dict[str, str] = {}
-    for item in result.value.domains:
-        judged.setdefault(item.domain.strip().casefold(), item.judgment)
-    judgments = {domain: judged.get(domain.casefold(), MISSING_VALUE) for domain in domains}
-    judgments["Overall"] = result.value.overall
-    return AIResult(judgments, result.usage)
 
 
 # --- Entities ---

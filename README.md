@@ -2,7 +2,7 @@
 
 An AI-assisted platform for systematic reviews and meta-analyses, built around human decisions: the AI suggests, reviewers decide, and every number should trace back to recorded data.
 
-> **Status:** early prototype. Review data, workflow sign-offs, and the audit trail are stored in PostgreSQL, but full-text retrieval, statistical meta-analysis, background jobs, and email invitations are not built yet. See [docs/roadmap.md](docs/roadmap.md) for the full build plan.
+> **Status:** in development, not yet released. Protocol through search, screening, full texts, extraction, risk of bias, statistical synthesis in R, and GRADE certainty are built (roadmap W0–W11); manuscript drafting, publication, living reviews, and billing are not. See [docs/roadmap.md](docs/roadmap.md) for the full build plan.
 
 ## Stack
 
@@ -10,6 +10,7 @@ An AI-assisted platform for systematic reviews and meta-analyses, built around h
 - **Backend:** FastAPI, SQLAlchemy, Python 3.12, managed with [uv](https://docs.astral.sh/uv/) (`backend/`)
 - **AI providers:** Anthropic, Google Gemini, OpenAI, Alibaba Qwen, Moonshot Kimi, DeepSeek, Zhipu GLM, Mistral. Each project pins a model from the catalog; server keys and users' own encrypted keys are both supported
 - **Literature sources:** PubMed (E-utilities), OpenAlex
+- **Statistics:** R 4.4 with metafor, meta, netmeta, mada, clubSandwich, lme4, bayesmeta, and robvis, run as scripts the API generates; every run stores its script, data, seed, and R session
 - **Infrastructure:** PostgreSQL, Redis, Caddy, Docker Compose
 
 ## Quick start with Docker
@@ -54,8 +55,10 @@ uv sync
 uv run alembic upgrade head        # create or update the database schema
 uv run python -m scripts.seed_dev  # optional: demo accounts and projects
 uv run uvicorn main:app --reload
-uv run arq workers.ai_worker.WorkerSettings  # in a second terminal: runs AI screening, extraction, appraisal, and embedding jobs
+uv run arq workers.ai_worker.WorkerSettings  # in a second terminal: runs AI, analysis, and embedding jobs
 ```
+
+Statistical analyses need R. `./scripts/setup_r_env.sh` installs R and its packages into `~/.local/share/omnireview/r` without sudo (it downloads micromamba) and prints the `RSCRIPT_PATH` line to add to `backend/.env`.
 
 OmniReview requires PostgreSQL 16 with the pgvector extension in every environment; there is no SQLite fallback. The setup script expects PostgreSQL 16 to be installed already (`sudo apt install postgresql`) and asks for your sudo password.
 
@@ -74,7 +77,7 @@ The frontend calls `http://localhost:8000` unless `VITE_API_URL` is set.
 # Backend (from backend/)
 uv run ruff check . && uv run ruff format --check .
 uv run mypy .
-uv run pytest                 # erases and rebuilds TEST_DATABASE_URL; add `-m live` for PubMed/OpenAlex tests
+uv run pytest                 # erases and rebuilds TEST_DATABASE_URL; add `-m live` for PubMed/OpenAlex tests; R tests skip without RSCRIPT_PATH
 
 # Frontend (from the repository root)
 npm run lint

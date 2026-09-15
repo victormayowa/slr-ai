@@ -18,17 +18,17 @@ from sqlalchemy.orm import Session, selectinload
 import models
 from audit import record_event
 from dedup import candidate_pairs, find_duplicates, reviewed_pairs
-from extraction_data import dataset_content, extraction_progress, included_records
+from extraction_data import dataset_content, extraction_progress, included_records, included_studies
 from permissions import Permission
 from prisma_flow import accepted_stopping
 from protocol_design import project_sections, protocol_issues
 from protocol_frameworks import PROTOCOL_SECTIONS, REQUIRED_SECTIONS
-from review_data import FULL_TEXT, TITLE_ABSTRACT, ReviewPolicy, has_successful_run, latest_run
+from review_data import FULL_TEXT, TITLE_ABSTRACT, ReviewPolicy
 from review_settings import review_policy
 from search_quality import press_status
 from studies import ensure_studies
 
-STAGES = ["protocol", "search", "screening", "full_text_screening", "extraction", "appraisal", "synthesis"]
+STAGES = ["protocol", "search", "screening", "full_text_screening", "extraction", "appraisal", "synthesis", "certainty"]
 
 STAGE_LABELS = {
     "protocol": "Protocol",
@@ -38,6 +38,7 @@ STAGE_LABELS = {
     "extraction": "Data extraction",
     "appraisal": "Risk of bias assessment",
     "synthesis": "Synthesis",
+    "certainty": "Certainty of evidence (GRADE)",
 }
 
 # Who may complete or reopen each stage.
@@ -49,6 +50,7 @@ STAGE_PERMISSIONS = {
     "extraction": Permission.MANAGE_WORKFLOW,
     "appraisal": Permission.MANAGE_WORKFLOW,
     "synthesis": Permission.APPROVE_ANALYSIS,
+    "certainty": Permission.APPROVE_CERTAINTY,
 }
 
 PROTOCOL_FIELDS = (
@@ -174,8 +176,8 @@ def requirements(db: Session, project: models.Project, stage: str) -> list[Requi
                 f"Required protocol sections written ({required_sections})", "section_missing" not in issue_codes
             ),
         ]
-    if stage == "synthesis":
-        return [Requirement("A synthesis report generated", _count(db, models.SynthesisReport, project.id) > 0)]
+    if stage in EVIDENCE_STAGES:
+        return _evidence_requirements(db, project, stage)
 
     records = _load_records(db, project.id)
     if stage == "search":
@@ -265,13 +267,7 @@ def requirements(db: Session, project: models.Project, stage: str) -> list[Requi
             Requirement("Every imputed value approved by a second reviewer", progress.unapproved_imputations == 0),
         ]
 
-    included = _included(records, policy)
-    return [
-        Requirement(
-            "Every included record has a risk of bias assessment",
-            all(has_successful_run(r, "appraisal") for r in included),
-        )
-    ]
+    raise WorkflowError(f"No requirements are defined for {stage}", status_code=500)
 
 
 def _snapshot_content(db: Session, project: models.Project, stage: str) -> dict[str, Any]:
@@ -300,16 +296,8 @@ def _snapshot_content(db: Session, project: models.Project, stage: str) -> dict[
             "search_strategies": [{"database": s.database, "query": s.query} for s in strategies],
             "extraction_fields": [field.name for field in project.extraction_fields],
         }
-    if stage == "synthesis":
-        report = db.scalar(
-            select(models.SynthesisReport)
-            .where(models.SynthesisReport.project_id == project.id)
-            .order_by(models.SynthesisReport.id.desc())
-            .limit(1)
-        )
-        return (
-            {"report_id": report.id, "record_count": report.record_count, "content": report.content} if report else {}
-        )
+    if stage in EVIDENCE_STAGES:
+        return _evidence_snapshot(db, project, stage)
 
     records = _load_records(db, project.id)
     if stage == "search":
@@ -393,20 +381,190 @@ def _snapshot_content(db: Session, project: models.Project, stage: str) -> dict[
     if stage == "extraction":
         return dataset_content(db, project.id)
 
-    content: list[dict[str, Any]] = []
-    for record in _included(records, policy):
-        run = latest_run(record, "appraisal")
-        if run is None:
-            continue
-        content.append(
+    raise WorkflowError(f"No snapshot is defined for {stage}", status_code=500)
+
+
+EVIDENCE_STAGES = ("appraisal", "synthesis", "certainty")
+
+
+def _final_run(analysis: models.Analysis) -> models.AnalysisRun | None:
+    current = hashlib.sha256(_canonical(analysis.spec).encode()).hexdigest()
+    runs = reversed(analysis.runs)
+    return next((r for r in runs if r.is_final and r.status == "succeeded" and r.spec_sha256 == current), None)
+
+
+def _project_rows[ModelT: models.Base](db: Session, model: type[ModelT], project_id: int) -> list[ModelT]:
+    return list(db.scalars(select(model).where(model.project_id == project_id).order_by(model.id)))  # type: ignore[attr-defined]
+
+
+def _evidence_requirements(db: Session, project: models.Project, stage: str) -> list[Requirement]:
+    if stage == "appraisal":
+        studies = included_studies(db, project.id)
+        assessments = _project_rows(db, models.AppraisalAssessment, project.id)
+        assessed = {a.study_id for a in assessments}
+        return [
+            Requirement(
+                "Every included study has a risk of bias or quality assessment",
+                bool(studies) and all(study.id in assessed for study in studies),
+            ),
+            Requirement(
+                "Every assessment signed off, with each domain judged and justified",
+                all(a.status == "signed_off" for a in assessments),
+            ),
+        ]
+    analyses = _project_rows(db, models.Analysis, project.id)
+    finished = [a for a in analyses if a.status == "approved" and _final_run(a) is not None]
+    if stage == "synthesis":
+        plan = (project.protocol.analysis_plan if project.protocol else None) or {}
+        primary = [
+            o["name"].casefold() for o in plan.get("outcomes", []) if o.get("priority") == "primary" and o.get("name")
+        ]
+        analysed = {a.outcome.casefold() for a in finished}
+        return [
+            Requirement(
+                "Every analysis approved by a statistician",
+                bool(analyses) and all(a.status == "approved" for a in analyses),
+            ),
+            Requirement(
+                "Every primary outcome in the analysis plan has an approved analysis with final results",
+                all(name in analysed for name in primary) if primary else bool(finished),
+            ),
+            Requirement(
+                "Every approved analysis has final results (run in R on the locked extraction data set)",
+                all(_final_run(a) is not None for a in analyses if a.status == "approved"),
+            ),
+        ]
+    grades = _project_rows(db, models.GradeAssessment, project.id)
+    graded = {g.outcome.casefold() for g in grades}
+    return [
+        Requirement(
+            "Every analysed outcome has a GRADE assessment",
+            bool(grades) and all(a.outcome.casefold() in graded for a in finished),
+        ),
+        Requirement(
+            "Every GRADE assessment signed off", bool(grades) and all(g.status == "signed_off" for g in grades)
+        ),
+        Requirement(
+            "Every Evidence to Decision framework signed off",
+            all(e.status == "signed_off" for e in _project_rows(db, models.EtdFramework, project.id)),
+        ),
+        Requirement(
+            "Every interpretive text approved by a clinical expert",
+            all(t.status == "approved" for t in _project_rows(db, models.InterpretationText, project.id)),
+        ),
+    ]
+
+
+def _evidence_snapshot(db: Session, project: models.Project, stage: str) -> dict[str, Any]:
+    if stage == "appraisal":
+        return {
+            "assessments": [
+                {
+                    "id": a.id,
+                    "study_id": a.study_id,
+                    "tool": a.tool,
+                    "tool_version": a.tool_version,
+                    "outcome": a.outcome,
+                    "selection_reason": a.selection_reason,
+                    "answers": {answer.question_id: answer.answer for answer in a.answers},
+                    "domains": {
+                        d.domain: {
+                            "judgment": d.judgment,
+                            "rationale": d.rationale,
+                            "algorithm_judgment": d.algorithm_judgment,
+                            "signed_off_by_id": d.signed_off_by_id,
+                        }
+                        for d in a.domains
+                    },
+                    "overall_judgment": a.overall_judgment,
+                    "overall_rationale": a.overall_rationale,
+                    "signed_off_by_id": a.signed_off_by_id,
+                }
+                for a in _project_rows(db, models.AppraisalAssessment, project.id)
+            ],
+            "reporting": [
+                {
+                    "study_id": r.study_id,
+                    "checklist": r.checklist,
+                    "status": r.status,
+                    "items": {item.item_id: item.status for item in r.items},
+                }
+                for r in _project_rows(db, models.ReportingAssessment, project.id)
+            ],
+        }
+    if stage == "synthesis":
+        analyses = []
+        for analysis in _project_rows(db, models.Analysis, project.id):
+            run = _final_run(analysis)
+            analyses.append(
+                {
+                    "id": analysis.id,
+                    "title": analysis.title,
+                    "outcome": analysis.outcome,
+                    "analysis_type": analysis.analysis_type,
+                    "spec": analysis.spec,
+                    "prespecified": analysis.prespecified,
+                    "plan_reference": analysis.plan_reference,
+                    "justification": analysis.justification,
+                    "approved_by_id": analysis.approved_by_id,
+                    "approval_note": analysis.approval_note,
+                    "final_run": {
+                        "id": run.id,
+                        "spec_sha256": run.spec_sha256,
+                        "dataset_sha256": run.dataset_sha256,
+                        "extraction_snapshot_id": run.extraction_snapshot_id,
+                        "seed": run.seed,
+                        "script_sha256": hashlib.sha256(run.script.encode()).hexdigest(),
+                        "r_version": run.r_version,
+                        "packages": run.packages,
+                        "results": run.results,
+                    }
+                    if run
+                    else None,
+                }
+            )
+        return {"analyses": analyses}
+    # The summary of findings is computed by the certainty module, which itself depends on this one.
+    from certainty_routes import summary_of_findings
+
+    return {
+        "grade_assessments": [
             {
-                "record_id": record.id,
-                "ai_run_id": run.id,
-                "tool": run.appraisal.tool if run.appraisal else None,
-                "judgments": run.appraisal.judgments if run.appraisal else None,
+                "id": g.id,
+                "outcome": g.outcome,
+                "comparison": g.comparison,
+                "analysis_id": g.analysis_id,
+                "importance": g.importance,
+                "starting_certainty": g.starting_certainty,
+                "domains": g.domains,
+                "certainty": g.certainty,
+                "mid": g.mid,
+                "mid_scale": g.mid_scale,
+                "baseline_risks": g.baseline_risks,
+                "signed_off_by_id": g.signed_off_by_id,
             }
-        )
-    return {"records": content}
+            for g in _project_rows(db, models.GradeAssessment, project.id)
+        ],
+        "summary_of_findings": summary_of_findings(db, project),
+        "evidence_to_decision": [
+            {"id": e.id, "title": e.title, "criteria": e.criteria, "conclusions": e.conclusions, "status": e.status}
+            for e in _project_rows(db, models.EtdFramework, project.id)
+        ],
+        "prior_reviews": [
+            {
+                "id": r.id,
+                "title": r.title,
+                "doi": r.doi,
+                "outcome": r.outcome,
+                "conclusion_direction": r.conclusion_direction,
+            }
+            for r in _project_rows(db, models.PriorReview, project.id)
+        ],
+        "interpretation": [
+            {"id": t.id, "kind": t.kind, "outcome": t.outcome, "content": t.content, "approved_by_id": t.approved_by_id}
+            for t in _project_rows(db, models.InterpretationText, project.id)
+        ],
+    }
 
 
 def _canonical(content: dict[str, Any]) -> str:

@@ -1,0 +1,25 @@
+# The R environment the statistics engine runs in, installed without sudo by backend/scripts/setup_r_env.sh.
+# Packages built on conda-forge come from there; the rest (mada, clubSandwich, netmeta, bayesmeta, robvis) are
+# installed from CRAN into the same environment by the setup script. Production images install the same set.
+name: omnireview-r
+channels:
+  - conda-forge
+dependencies:
+  - r-base=4.4
+  - r-jsonlite
+  - r-metafor
+  - r-meta
+  - r-lme4
+  - r-ggplot2
+  - r-svglite
+  - r-remotes
+  - r-mvtnorm
+  - r-checkmate
+  - r-sandwich
+  - r-numderiv
+  - r-abind
+  - r-ellipse
+  - r-mass
+  - r-igraph
+  - r-tidyr
+  - r-ggrepel

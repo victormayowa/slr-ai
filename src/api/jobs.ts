@@ -1,7 +1,7 @@
 // Mirrors jobs_out in backend/jobs.py.
 export type AiJob = {
   id: number;
-  task: 'screening' | 'extraction' | 'appraisal' | 'embedding' | 'fulltext';
+  task: 'screening' | 'fulltext_screening' | 'extraction' | 'appraisal' | 'reporting' | 'statistics' | 'embedding' | 'fulltext';
   // A completed job can still include records that failed; see `failed`.
   status: 'queued' | 'running' | 'completed' | 'failed';
   total: number;

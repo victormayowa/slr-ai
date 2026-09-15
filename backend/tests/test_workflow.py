@@ -4,12 +4,12 @@ from dataclasses import replace
 import pytest
 from sqlalchemy import select
 from workflow_helpers import (
-    APPRAISAL_REPLY,
     GENERATED_PROTOCOL,
     PROTOCOL,
     RECORDS,
     ProviderHTTPError,
     add_member,
+    appraise,
     complete_stage,
     create_project,
     decide,
@@ -447,16 +447,12 @@ def test_extraction_and_appraisal_run_only_on_included_records(client, project, 
     assert (accepted["state"], accepted["final"]["display"]) == ("final", "120")
     complete_stage(client, project_id, headers, "extraction")
 
-    assert (
-        client.post(url(project_id, "appraisal/ai"), json={"record_ids": [excluded["id"]]}, headers=headers).status_code
-        == 400
+    not_included = {"study_id": study_id + 1000, "tool": "rob2", "outcome": "MI", "selection_reason": "A trial"}
+    assert client.post(url(project_id, "appraisal/assessments"), json=not_included, headers=headers).status_code == 404
+    assessment = appraise(
+        client, project_id, headers, study_id, selection_reason="A randomized trial, per the abstract."
     )
-    fake_provider(APPRAISAL_REPLY)
-    appraised = run_ai(client, project_id, headers, "appraisal/ai", {"record_ids": [included["id"]]})[0]
-    assert appraised["appraisal"]["tool"] == "ROB-2"
-    assert appraised["appraisal"]["judgments"]["D1: Randomization"] == "Low"
-    assert appraised["appraisal"]["judgments"]["D2: Deviations"] == "Missing from AI response"
-    assert appraised["appraisal"]["judgments"]["Overall"] == "Low Risk"
+    assert (assessment["status"], assessment["domain_judgments"]["d1"]["algorithm_judgment"]) == ("signed_off", "low")
 
 
 def test_screeners_cannot_run_extraction(client, project, make_user):

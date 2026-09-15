@@ -777,13 +777,23 @@ async def create_synthesis(
         }
         for study in study_rows
     ]
-    appraisals = {
-        record.title: run.appraisal.judgments
-        for record in records
-        if (run := latest_run(record, "appraisal")) is not None and run.appraisal is not None
-    }
-    for item in study_data:
-        item["risk_of_bias"] = [appraisals[title] for title in item["reports"] if title in appraisals]
+    appraisals: dict[int, list[dict]] = {}
+    for assessment in db.scalars(
+        select(models.AppraisalAssessment).where(
+            models.AppraisalAssessment.project_id == access.project.id,
+            models.AppraisalAssessment.status == "signed_off",
+        )
+    ):
+        appraisals.setdefault(assessment.study_id, []).append(
+            {
+                "tool": assessment.tool,
+                "outcome": assessment.outcome,
+                "overall": assessment.overall_judgment,
+                "domains": {d.domain: d.judgment for d in assessment.domains},
+            }
+        )
+    for item, study in zip(study_data, study_rows, strict=True):
+        item["risk_of_bias"] = appraisals.get(study["study_id"], [])
     ai = project_ai(db, access)
     run = new_ai_run(access, "synthesis", SYNTHESIS_PROMPT, ai)
     try:

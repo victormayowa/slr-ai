@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth/authContext';
 import { RequireAuth } from './auth/RequireAuth';
 import { RiskOfBiasScreen } from './features/appraisal/RiskOfBiasScreen';
+import { CertaintyScreen } from './features/certainty/CertaintyScreen';
 import { ExtractionScreen } from './features/extraction/ExtractionScreen';
 import { FullTextScreen } from './features/fulltext/FullTextScreen';
 import { FullTextScreeningScreen } from './features/screening/FullTextScreeningScreen';
@@ -62,6 +63,7 @@ function App() {
           <Route path="prisma" element={<PrismaScreen />} />
           <Route path="risk-of-bias" element={<RiskOfBiasScreen />} />
           <Route path="synthesis" element={<SynthesisScreen />} />
+          <Route path="certainty" element={<CertaintyScreen />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

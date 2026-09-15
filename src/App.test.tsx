@@ -312,6 +312,71 @@ describe('App routing', () => {
     expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({ field_id: 5, arm_id: null, source: 'ai_accepted', ai_suggestion_id: 9 });
   });
 
+  it('lists included studies with the appraisal tool recommended for their design', async () => {
+    mockApi({
+      'POST /api/auth/login': LOGIN,
+      ...WORKSPACE_API,
+      'GET /api/projects/7/appraisal/overview': [{
+        study_id: 3, label: 'Smith 2019', design: 'Randomized controlled trial', recommended_checklist: 'consort', assessments: [], reporting: [],
+        recommended_tools: [{ tool: 'rob2', reason: 'Randomized trials are assessed with RoB 2, the Cochrane tool, for each result.' }],
+      }],
+      'GET /api/projects/7/appraisal/tools': {
+        tools: [{ key: 'rob2', label: 'RoB 2', version: '2019', study_types: '', reference: '', guidance_url: '', per_outcome: true, notes: [], overall_judgments: [], has_overall_algorithm: true, domains: [] }],
+        checklists: [],
+      },
+      'GET /api/projects/7/appraisal/summary': [],
+    });
+    renderApp('/projects/7/risk-of-bias');
+
+    signIn();
+
+    expect(await screen.findByText(/Randomized trials are assessed with RoB 2/)).toBeTruthy();
+    expect(screen.getByLabelText('Outcome (result assessed)')).toBeTruthy();
+  });
+
+  it('explains when the statistics engine is unavailable', async () => {
+    mockApi({
+      'POST /api/auth/login': LOGIN,
+      ...WORKSPACE_API,
+      'GET /api/projects/7/statistics/engine': {
+        available: false, r_version: '', packages: {}, analysis_types: {}, analysis_type_labels: { pairwise: 'Pairwise meta-analysis' },
+        message: "R isn't installed on the server. Run backend/scripts/setup_r_env.sh and set RSCRIPT_PATH.",
+      },
+      'GET /api/projects/7/analyses': { analyses: [], plan: { 'myocardial infarction': 'outcome' } },
+      'GET /api/projects/7/extraction/form': { fields: [], field_types: [], templates: [], conversions: [], units: { groups: {}, analytes: [] }, settings: {}, analysis_outcomes: [] },
+      'GET /api/projects/7/studies': [],
+      'GET /api/projects/7/ipd': [],
+    });
+    renderApp('/projects/7/synthesis');
+
+    signIn();
+
+    expect(await screen.findByText(/R isn't installed on the server/)).toBeTruthy();
+    expect(screen.getByText('Statistics engine unavailable')).toBeTruthy();
+  });
+
+  it('shows the summary of findings with GRADE certainty', async () => {
+    const columns = ['Outcome', 'Importance', 'Studies (participants)', 'Relative effect (95% CI)', 'Baseline risk', 'Risk with comparator', 'Risk with intervention (95% CI)', 'Difference (95% CI)', 'NNT', 'Certainty', 'What happens', 'Explanations'];
+    const cells = ['Myocardial infarction', 'critical', '2 (498)', 'RR 0.59 (0.36 to 0.97)', 'Moderate risk', '150 per 1000', '89 per 1000 (54 to 146)', '-61 per 1000 (-96 to -4)', 'NNTB 17 (11 to 250)', 'Moderate', 'Aspirin likely results in a reduction in myocardial infarction.', ''];
+    mockApi({
+      'POST /api/auth/login': LOGIN,
+      ...WORKSPACE_API,
+      'GET /api/projects/7/certainty/catalog': { levels: [], downgrade_domains: {}, upgrade_domains: {}, etd_criteria: [], recommendation_types: [], conclusion_fields: [], conclusion_directions: [] },
+      'GET /api/projects/7/certainty/outcomes': [],
+      'GET /api/projects/7/grade': [],
+      'GET /api/projects/7/summary-of-findings': { intervention: 'Aspirin', columns, rows: [{ outcome: 'Myocardial infarction' }], table: [cells] },
+      'GET /api/projects/7/etd': [],
+      'GET /api/projects/7/prior-reviews': { reviews: [], from_topic_exploration: [] },
+      'GET /api/projects/7/interpretation': [],
+    });
+    renderApp('/projects/7/certainty');
+
+    signIn();
+
+    expect(await screen.findByText('Aspirin likely results in a reduction in myocardial infarction.')).toBeTruthy();
+    expect(screen.getByText(/⊕⊕⊕◯ Moderate/)).toBeTruthy();
+  });
+
   it('explains when a project cannot be opened', async () => {
     mockApi({ 'POST /api/auth/login': LOGIN });
     renderApp('/projects/7/setup');

@@ -18,7 +18,8 @@ export const PROJECT_TABS = [
   { path: 'extraction', label: '16. Data Extraction' },
   { path: 'prisma', label: '17. PRISMA Flow Diagram' },
   { path: 'risk-of-bias', label: '18. Risk of Bias & Quality' },
-  { path: 'synthesis', label: '19. Narrative Synthesis' },
+  { path: 'synthesis', label: '19. Statistical Synthesis' },
+  { path: 'certainty', label: '20. Certainty & Interpretation' },
 ] as const;
 
 export type ProjectTab = (typeof PROJECT_TABS)[number]['path'];

@@ -14,9 +14,11 @@ from ai_access import resolve_ai
 from ai_catalog import default_model
 from ai_routes import router as ai_router
 from ai_tasks import TaskNotReady
+from appraisal_routes import router as appraisal_router
 from audit_routes import router as audit_router
 from auth_routes import get_current_user
 from auth_routes import router as auth_router
+from certainty_routes import router as certainty_router
 from database import engine, get_db
 from documents_routes import router as documents_router
 from entities_routes import router as entities_router
@@ -38,6 +40,7 @@ from security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 from services.ai_screening import answer_faq
 from services.errors import LLMError
 from studies_routes import router as studies_router
+from synthesis_routes import router as synthesis_router
 from topic_routes import router as topic_router
 from workflow import WorkflowError
 from workflow_routes import router as workflow_router
@@ -101,6 +104,9 @@ app.include_router(documents_router)
 app.include_router(studies_router)
 app.include_router(extraction_router)
 app.include_router(entities_router)
+app.include_router(appraisal_router)
+app.include_router(synthesis_router)
+app.include_router(certainty_router)
 
 
 @app.exception_handler(TaskNotReady)

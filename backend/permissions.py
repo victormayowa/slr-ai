@@ -30,6 +30,7 @@ class Permission(StrEnum):
     RUN_ANALYSIS = "analysis:run"
     APPROVE_ANALYSIS = "analysis:approve"
     APPROVE_CERTAINTY = "certainty:approve"
+    APPROVE_INTERPRETATION = "interpretation:approve"
     EDIT_MANUSCRIPT = "manuscript:edit"
     VIEW_AUDIT = "audit:view"
     EXPORT = "export:run"
@@ -53,6 +54,7 @@ ROLE_PERMISSIONS: dict[ProjectRole, frozenset[Permission]] = {
             _P.APPRAISE,
             _P.RUN_ANALYSIS,
             _P.APPROVE_CERTAINTY,
+            _P.APPROVE_INTERPRETATION,
             _P.EDIT_MANUSCRIPT,
             _P.VIEW_AUDIT,
             _P.EXPORT,
@@ -62,7 +64,9 @@ ROLE_PERMISSIONS: dict[ProjectRole, frozenset[Permission]] = {
     ProjectRole.STATISTICIAN: frozenset(
         {_P.VIEW_PROJECT, _P.EXTRACT, _P.RUN_ANALYSIS, _P.APPROVE_ANALYSIS, _P.EDIT_MANUSCRIPT, _P.EXPORT}
     ),
-    ProjectRole.CLINICAL_EXPERT: frozenset({_P.VIEW_PROJECT, _P.SCREEN, _P.EXTRACT, _P.APPRAISE, _P.EDIT_MANUSCRIPT}),
+    ProjectRole.CLINICAL_EXPERT: frozenset(
+        {_P.VIEW_PROJECT, _P.SCREEN, _P.EXTRACT, _P.APPRAISE, _P.APPROVE_INTERPRETATION, _P.EDIT_MANUSCRIPT}
+    ),
     ProjectRole.SCREENER: frozenset({_P.VIEW_PROJECT, _P.SCREEN}),
     ProjectRole.EXTRACTOR: frozenset({_P.VIEW_PROJECT, _P.EXTRACT, _P.APPRAISE}),
     ProjectRole.AUDITOR: frozenset({_P.VIEW_PROJECT, _P.VIEW_AUDIT, _P.EXPORT}),

@@ -34,7 +34,7 @@ def test_a_new_project_starts_with_only_the_protocol_open(client, project):
 
     stages = workflow(client, project_id, headers)
 
-    assert [info["status"] for info in stages.values()] == ["open"] + ["not_started"] * 6
+    assert [info["status"] for info in stages.values()] == ["open"] + ["not_started"] * 7
     unmet = [r["label"] for r in stages["protocol"]["requirements"] if not r["met"]]
     assert unmet == [
         "Study description written",

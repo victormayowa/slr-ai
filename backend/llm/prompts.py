@@ -123,20 +123,48 @@ specific mention. Leave out concepts only mentioned in passing, such as in the b
 
 APPRAISAL_PROMPT = PromptTemplate(
     "appraisal",
-    2,
-    """You are a systematic reviewer assessing risk of bias with the $tool tool.
+    3,
+    """You are a systematic reviewer assessing a study with $tool.
 $untrusted_text_note
 
 <paper>
 $paper
 </paper>
 
-Assess each of these domains:
+The result being assessed: $outcome
+
+<questions>
+$questions
+</questions>
+
+Domains to judge:
 $domains
 
-For each domain, return its name exactly as written, a judgment of "Low", "High", or "Unclear", and a one-sentence
-rationale based on the paper text. Use "Unclear" when the text doesn't report enough to judge.
-Then give the overall judgment, "Low Risk", "High Risk", or "Some Concerns", following the tool's standard rules.""",
+Answer every question that applies, following the tool's official guidance. Use exactly one of the listed answer keys,
+a one-sentence rationale, and a short quote copied word for word from the paper that supports the answer, or null when
+the answer rests on something the paper doesn't report. $passage_instruction
+Use the "no information" or "unclear" answer when the paper doesn't report enough; never guess.
+Then give each domain one of its listed judgment keys with a one-sentence rationale.""",
+)
+
+REPORTING_PROMPT = PromptTemplate(
+    "reporting",
+    1,
+    """You are checking how completely a study report follows the $checklist reporting guideline.
+$untrusted_text_note
+
+<paper>
+$paper
+</paper>
+
+<items>
+$items
+</items>
+
+For every item, give its id, a status from: $statuses, a one-sentence rationale, and a short quote copied word for word
+from the paper showing where the item is reported, or null when it isn't reported. $passage_instruction
+Use partially_reported when only some of the item's elements are reported, and not_applicable only when the item can't
+apply to this study.""",
 )
 
 SYNTHESIS_PROMPT = PromptTemplate(
@@ -265,6 +293,7 @@ PROMPTS = {
         EXTRACTION_PROMPT,
         ENTITY_PROMPT,
         APPRAISAL_PROMPT,
+        REPORTING_PROMPT,
         SYNTHESIS_PROMPT,
         FAQ_PROMPT,
         QUESTION_PROMPT,
@@ -273,3 +302,25 @@ PROMPTS = {
         TOPIC_QUESTIONS_PROMPT,
     )
 }
+
+PLAIN_LANGUAGE_PROMPT = PromptTemplate(
+    "plain_language_summary",
+    1,
+    """You are writing a plain-language summary of a systematic review for patients and the public.
+$untrusted_text_note
+
+<review_question>
+$question
+</review_question>
+
+<summary_of_findings>
+$findings
+</summary_of_findings>
+
+Write 150 to 300 words in plain language at a reading age of about 12: what was asked, what the studies found for each
+outcome, and how certain the evidence is. Use only numbers that appear in the summary of findings (you may write
+"per 1000" figures as they are). Keep the GRADE wording of how certain each finding is: "is very uncertain", "may",
+"probably", or definite statements for high certainty. Don't add outcomes, recommendations, or claims that aren't in
+the summary of findings.""",
+)
+PROMPTS[PLAIN_LANGUAGE_PROMPT.name] = PLAIN_LANGUAGE_PROMPT

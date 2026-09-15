@@ -34,3 +34,13 @@ def encrypt(plaintext: str, context: str) -> bytes:
 
 def decrypt(ciphertext: bytes, context: str) -> str:
     return AESGCM(_key()).decrypt(ciphertext[:_NONCE_BYTES], ciphertext[_NONCE_BYTES:], context.encode()).decode()
+
+
+def encrypt_bytes(plaintext: bytes, context: str) -> bytes:
+    """Encrypt a file's contents, bound to `context` (for example the owning project and study)."""
+    nonce = os.urandom(_NONCE_BYTES)
+    return nonce + AESGCM(_key()).encrypt(nonce, plaintext, context.encode())
+
+
+def decrypt_bytes(ciphertext: bytes, context: str) -> bytes:
+    return AESGCM(_key()).decrypt(ciphertext[:_NONCE_BYTES], ciphertext[_NONCE_BYTES:], context.encode())

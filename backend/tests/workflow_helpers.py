@@ -45,10 +45,8 @@ REQUIRED_SECTIONS = {
     "synthesis": "Random-effects meta-analysis of risk ratios.",
 }
 EXTRACTION_REPLY = '{"values": [{"field": "Sample Size", "value": 120, "quote": "Adults randomized to aspirin."}]}'
-APPRAISAL_REPLY = (
-    '{"domains": [{"domain": "D1: Randomization", "judgment": "Low", "rationale": "Randomized."}],'
-    ' "overall": "Low Risk"}'
-)
+# RoB 2 answers suggesting low risk of bias; other questions are answered "N".
+LOW_RISK_ANSWERS = {"1.1": "Y", "1.2": "Y", "1.3": "N", "2.1": "N", "2.2": "N", "2.6": "Y", "3.1": "Y", "5.1": "Y"}
 RECORDS = [
     {"title": "Aspirin trial", "doi": "10.1/a", "abstract": "Adults randomized to aspirin."},
     {"title": "Statin trial", "abstract": "Adults randomized to statins."},
@@ -170,16 +168,42 @@ def extract(client, project_id, headers, study_id, field_id, value=None, **extra
     return response.json()
 
 
+def complete_assessment(client, project_id, headers, assessment):
+    """Answer every applicable RoB 2 question, sign off each domain (with the algorithm's judgment), and the overall."""
+    path = url(project_id, f"appraisal/assessments/{assessment['id']}")
+    while assessment["unanswered"]:
+        answers = [{"question_id": q, "answer": LOW_RISK_ANSWERS.get(q, "N")} for q in assessment["unanswered"]]
+        response = client.put(f"{path}/answers", json={"answers": answers}, headers=headers)
+        assert response.status_code == 200, response.text
+        assessment = response.json()
+    for domain in assessment["applicable_questions"]:
+        judgment = assessment["suggested"]["domains"].get(domain) or "low"
+        body = {"judgment": judgment, "rationale": "Judged from the trial report."}
+        response = client.put(f"{path}/domains/{domain}", json=body, headers=headers)
+        assert response.status_code == 200, response.text
+        assessment = response.json()
+    body = {"judgment": assessment["suggested"]["overall"] or "low", "rationale": "Follows the domain judgments."}
+    response = client.put(f"{path}/overall", json=body, headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def appraise(client, project_id, headers, study_id, outcome="Myocardial infarction", selection_reason=""):
+    """Create a RoB 2 assessment of the study's result for the outcome and sign it off. Returns the assessment."""
+    body = {"study_id": study_id, "tool": "rob2", "outcome": outcome, "selection_reason": selection_reason}
+    response = client.post(url(project_id, "appraisal/assessments"), json=body, headers=headers)
+    assert response.status_code == 201, response.text
+    return complete_assessment(client, project_id, headers, response.json())
+
+
 def open_synthesis(client, project_id, headers, fake_provider):
-    """Extract a value for the included study, run appraisal, and sign off both stages. Returns the included record."""
+    """Extract a value for the included study, appraise it, and sign off both stages. Returns the included record."""
     included, _ = open_extraction(client, project_id, headers, fake_provider)
     study = client.get(url(project_id, "studies"), headers=headers).json()[0]
     field = form_fields(client, project_id, headers)["Sample Size"]
     extract(client, project_id, headers, study["id"], field["id"], {"text": "120"})
     complete_stage(client, project_id, headers, "extraction")
-    body = {"record_ids": [included["id"]]}
-    fake_provider(APPRAISAL_REPLY)
-    run_ai(client, project_id, headers, "appraisal/ai", body)
+    appraise(client, project_id, headers, study["id"], selection_reason="A randomized trial, per the abstract.")
     complete_stage(client, project_id, headers, "appraisal")
     return included
 
