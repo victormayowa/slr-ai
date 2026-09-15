@@ -667,3 +667,18 @@ class PressReview(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     reviewer: Mapped[User | None] = relationship()
+
+
+class CitationLink(Base):
+    """A record found by citation searching, linked to the record whose references or citations it came from."""
+
+    __tablename__ = "citation_links"
+    __table_args__ = (UniqueConstraint("search_run_id", "seed_record_id", "record_id", name="uq_citation_link"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    search_run_id: Mapped[int] = mapped_column(ForeignKey("search_runs.id", ondelete="CASCADE"))
+    seed_record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"))
+    record_id: Mapped[int] = mapped_column(ForeignKey("records.id", ondelete="CASCADE"))
+    # "backward" (a reference of the seed) or "forward" (cites the seed)
+    direction: Mapped[str] = mapped_column(String(10))

@@ -319,7 +319,7 @@ export function SearchScreen() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px' }}>
         <button className="btn-glass" onClick={handleResetSearch} style={{ color: '#ef4444', borderColor: '#ef4444' }}>✕ Clear All Searches</button>
-        <button className="btn-primary" onClick={() => goTo('deduplication')}>Proceed to Deduplication →</button>
+        <button className="btn-primary" onClick={() => goTo('other-sources')}>Proceed to Citations & Grey Literature →</button>
       </div>
     </section>
   );

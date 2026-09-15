@@ -138,7 +138,7 @@ def run_out(run: models.SearchRun) -> dict:
     }
 
 
-def _new_record(project_id: int, result: dict) -> models.Record:
+def new_record(project_id: int, result: dict) -> models.Record:
     return models.Record(
         project_id=project_id,
         title=str(result.get("title") or "No Title")[:2000],
@@ -224,7 +224,7 @@ async def run_search(
         filters={"retrieval_limit": body.limit},
         executed_by_id=access.user.id,
     )
-    run.records = [_new_record(access.project.id, result) for result in results]
+    run.records = [new_record(access.project.id, result) for result in results]
     db.add(run)
     db.flush()
     record_event(
@@ -428,6 +428,10 @@ def prisma_counts(
         "identified_from_registers": identified("register"),
         "identified_from_other_methods": identified("other", "citation"),
         "identified_from_uploads": identified("import"),
+        "other_methods": {
+            "citation_searching": identified("citation"),
+            "grey_literature_and_websites": identified("other"),
+        },
         "by_source": by_source,
         "duplicates_removed": len(records) - len(unique_records),
         "screened": len(unique_records),

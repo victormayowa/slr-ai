@@ -67,21 +67,47 @@ def _work_record(work: dict) -> dict:
     }
 
 
-def openalex_search(query: str, limit: int) -> tuple[list[dict], int]:
-    """Works matching the query, up to `limit`, and the total OpenAlex reports."""
+def _paged_works(params: dict[str, str | int], limit: int) -> tuple[list[dict], int]:
     records: list[dict] = []
     cursor: str | None = "*"
     total = 0
     while len(records) < limit and cursor:
-        data = _get_works({"search": query, "per-page": min(200, limit - len(records)), "cursor": cursor})
+        data = _get_works({**params, "per-page": min(200, limit - len(records)), "cursor": cursor})
         meta = data.get("meta") or {}
         total = int(meta.get("count") or 0)
         results = data.get("results", [])
         records += [_work_record(work) for work in results]
         cursor = meta.get("next_cursor")
-        if not results or not cursor:
+        if not results:
             break
     return records[:limit], total
+
+
+def openalex_search(query: str, limit: int) -> tuple[list[dict], int]:
+    """Works matching the query, up to `limit`, and the total OpenAlex reports."""
+    return _paged_works({"search": query}, limit)
+
+
+def openalex_raw_works(filter_name: str, values: list[str], select: str) -> list[dict]:
+    """Works matching any of the values for a filter (such as doi, pmid, or openalex), with only `select` fields."""
+    works: list[dict] = []
+    for start in range(0, len(values), 50):
+        chunk = values[start : start + 50]
+        data = _get_works({"filter": f"{filter_name}:" + "|".join(chunk), "per-page": 50, "select": select})
+        works += data.get("results", [])
+    return works
+
+
+_RECORD_FIELDS = "id,doi,ids,title,authorships,publication_year,primary_location,abstract_inverted_index"
+
+
+def openalex_records(openalex_ids: list[str]) -> list[dict]:
+    return [_work_record(work) for work in openalex_raw_works("openalex", openalex_ids, _RECORD_FIELDS)]
+
+
+def openalex_citing(openalex_id: str, limit: int) -> tuple[list[dict], int]:
+    """Works that cite the given work, up to `limit`, and how many OpenAlex reports."""
+    return _paged_works({"filter": f"cites:{openalex_id}"}, limit)
 
 
 def search_openalex(query: str, max_results: int = 50) -> list[dict]:

@@ -22,6 +22,7 @@ export type PrismaCounts = {
   identified_from_databases: number;
   identified_from_registers?: number;
   identified_from_other_methods?: number;
+  other_methods?: { citation_searching: number; grey_literature_and_websites: number };
   identified_from_uploads: number;
   by_source: Record<string, number>;
   duplicates_removed: number;

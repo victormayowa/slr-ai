@@ -13,7 +13,13 @@ export type ConnectorInfo = {
 
 export type ImportOnlySource = { label: string; interface: string; export_hint: string; aliases: string[] };
 
-export type SearchSources = { connectors: ConnectorInfo[]; import_only: ImportOnlySource[]; import_formats: string; max_results: number };
+export type SearchSources = {
+  connectors: ConnectorInfo[];
+  import_only: ImportOnlySource[];
+  import_formats: string;
+  max_results: number;
+  grey_literature_types?: { key: string; label: string }[];
+};
 
 export type SearchRunInfo = {
   id: number;

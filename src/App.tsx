@@ -14,6 +14,7 @@ import { RegistrationScreen } from './features/registration/RegistrationScreen';
 import { SetupScreen } from './features/protocol/SetupScreen';
 import { ScreeningScreen } from './features/screening/ScreeningScreen';
 import { DeduplicationScreen } from './features/search/DeduplicationScreen';
+import { OtherSourcesScreen } from './features/search/OtherSourcesScreen';
 import { SearchScreen } from './features/search/SearchScreen';
 import { SynthesisScreen } from './features/synthesis/SynthesisScreen';
 import { TopicScreen } from './features/topic/TopicScreen';
@@ -47,6 +48,7 @@ function App() {
           <Route path="protocol-document" element={<ProtocolDocumentScreen />} />
           <Route path="registration" element={<RegistrationScreen />} />
           <Route path="search" element={<SearchScreen />} />
+          <Route path="other-sources" element={<OtherSourcesScreen />} />
           <Route path="deduplication" element={<DeduplicationScreen />} />
           <Route path="screening" element={<ScreeningScreen />} />
           <Route path="extraction-fields" element={<ExtractionFieldsScreen />} />

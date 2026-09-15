@@ -122,6 +122,20 @@ IMPORT_ONLY_SOURCES = (
 )
 
 
+GREY_LITERATURE_TYPES = {
+    "thesis": "Thesis or dissertation",
+    "conference_abstract": "Conference abstract",
+    "preprint": "Preprint",
+    "government_report": "Government or agency report",
+    "regulatory_document": "Regulatory document",
+    "clinical_study_report": "Clinical study report",
+    "trial_register": "Trial register entry",
+    "policy_document": "Policy document",
+    "website": "Website",
+    "other": "Other source",
+}
+
+
 def normalize_database_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
 
@@ -145,4 +159,5 @@ def catalog() -> dict:
         "import_only": [asdict(source) for source in IMPORT_ONLY_SOURCES],
         "import_formats": SUPPORTED_FORMATS,
         "max_results": MAX_RESULTS,
+        "grey_literature_types": [{"key": key, "label": label} for key, label in GREY_LITERATURE_TYPES.items()],
     }
