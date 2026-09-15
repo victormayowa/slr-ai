@@ -22,7 +22,7 @@ export function DeduplicationScreen() {
 
   return (
     <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
-      <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>4. Deduplication</h3>
+      <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>Deduplication</h3>
       <WorkspaceStageGate stage="search" />
       <button className="btn-primary" onClick={handleRunDedup} disabled={dedupLoading} style={{ marginTop: '24px', padding: '16px 32px' }}>
         {dedupLoading ? 'Analyzing IDs...' : 'Run Automated Deduplication'}

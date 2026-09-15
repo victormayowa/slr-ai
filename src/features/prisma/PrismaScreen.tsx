@@ -4,7 +4,7 @@ export function PrismaScreen() {
   const { prisma, goTo } = useWorkspace();
   return (
     <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
-      <h3 style={{ marginBottom: '24px', color: 'var(--text-primary)' }}>8. PRISMA Flow Diagram</h3>
+      <h3 style={{ marginBottom: '24px', color: 'var(--text-primary)' }}>PRISMA Flow Diagram</h3>
       <div style={{ padding: '32px', background: 'rgba(0,0,0,0.3)', borderRadius: '12px' }}>
         <p style={{ color: 'var(--text-secondary)', marginTop: 0 }}>Counts computed from the project's saved searches, imports, deduplication, and reviewer decisions. The PRISMA 2020 flow diagram itself is not generated yet.</p>
         <ul style={{ lineHeight: 1.8, margin: 0 }}>

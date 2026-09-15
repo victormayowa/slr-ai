@@ -98,7 +98,7 @@ def test_generated_protocol_is_stored_with_provenance(client, project, fake_prov
             "succeeded",
             "gemini",
             "gemini-3.8-flash",
-            "protocol-v2",
+            "protocol-v3",
             "platform",
         )
         assert (run.input_tokens, run.output_tokens, run.attempts) == (100, 20, 1)

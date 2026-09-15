@@ -10,6 +10,24 @@ const model = (id: number, provider: string, providerLabel: string, modelId: str
   id, provider, provider_label: providerLabel, model_id: modelId, label, is_default: id === 4, enabled: true,
   data_location: `${providerLabel}, somewhere`, available,
 });
+const CATALOG = {
+  frameworks: [
+    { key: 'PICO', label: 'PICO', use_for: 'Intervention reviews', elements: [
+      { key: 'population', label: 'Population', hint: 'Who is studied' },
+      { key: 'intervention', label: 'Intervention', hint: 'The treatment' },
+    ] },
+    { key: 'PCC', label: 'PCC', use_for: 'Scoping reviews', elements: [
+      { key: 'population', label: 'Population', hint: 'Who is studied' },
+      { key: 'concept', label: 'Concept', hint: 'The main idea' },
+    ] },
+  ],
+  general_criterion_elements: [{ key: 'other', label: 'Other', hint: '' }],
+  finer_criteria: [{ key: 'novel', label: 'Novel', hint: 'Not already answered' }],
+  finer_ratings: ['yes', 'partly', 'no'],
+  sections: [],
+  synthesis_approaches: [],
+  outcome_priorities: [],
+};
 const GEMINI = model(4, 'gemini', 'Google Gemini', 'gemini-3.8-flash', 'Gemini 3.8 Flash', true);
 const MISTRAL = model(17, 'mistral', 'Mistral AI', 'mistral-large-latest', 'Mistral Large (latest)', false);
 const PROJECT = { id: 7, title: 'Aspirin review', description: null, role: 'lead_reviewer', member_count: 3, organization: null, ai_model: GEMINI };
@@ -22,7 +40,7 @@ const stage = (name: string, label: string, status: string) => ({
 const WORKSPACE_API = {
   'GET /api/projects/7': PROJECT,
   'GET /api/projects/7/protocol': { review_type: 'Systematic Review', framework: 'PICO', description: 'Does aspirin help?', suggested_criteria: '', extraction_outline: '', rob_tool: 'ROB-2' },
-  'GET /api/projects/7/criteria': [{ id: 1, kind: 'inclusion', text: 'Adults', status: 'accepted' }],
+  'GET /api/projects/7/criteria': [{ id: 1, kind: 'inclusion', text: 'Adults', status: 'accepted', element: 'population', source: 'ai' }],
   'GET /api/projects/7/search-strategies': [{ id: 1, database: 'PubMed', query: 'aspirin[tiab]' }],
   'GET /api/projects/7/extraction-fields': ['Sample Size'],
   'GET /api/projects/7/synthesis': null,
@@ -37,6 +55,7 @@ const WORKSPACE_API = {
     stage('screening', 'Title and abstract screening', 'open'),
   ],
   'GET /api/ai/models': [GEMINI, MISTRAL],
+  'GET /api/protocol-frameworks': CATALOG,
 };
 
 // Answers fetch calls from a table keyed by "METHOD /path"; unexpected requests get a 500.
@@ -100,7 +119,7 @@ describe('App routing', () => {
 
     signIn();
 
-    expect(await screen.findByRole('heading', { name: '5. Abstract Screening' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Abstract Screening' })).toBeTruthy();
     expect(screen.getByText('Low-dose aspirin trial')).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Title and abstract screening sign-off' })).toBeTruthy();
   });
@@ -117,6 +136,35 @@ describe('App routing', () => {
     expect(await screen.findByText(/No Mistral AI API key is available to you/)).toBeTruthy();
     const pinCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
     expect(pinCall?.[1]?.body).toBe(JSON.stringify({ ai_model_id: 17 }));
+  });
+
+  it('applies an AI question suggestion only when the reviewer saves it', async () => {
+    const question = { framework: 'PICO', question: '', elements: { population: '', intervention: '' }, finer: {} };
+    const suggestion = {
+      id: 5, kind: 'question', section_key: null, provider: 'gemini', model: 'gemini-3.8-flash', created_at: '2026-09-15T00:00:00Z',
+      content: { framework: 'PCC', question: 'What is known about aspirin use?', elements: { population: 'Adults', concept: '' }, finer_notes: { novel: 'Look for recent reviews.' } },
+    };
+    const fetchMock = mockApi({
+      'POST /api/auth/login': LOGIN, ...WORKSPACE_API,
+      'GET /api/projects/7/question': question,
+      'POST /api/projects/7/question/ai': suggestion,
+      'PUT /api/projects/7/question': { ...question, framework: 'PCC', question: 'What is known about aspirin use?', elements: { population: 'Adults', concept: '' } },
+    });
+    renderApp('/projects/7/question');
+
+    signIn();
+    fireEvent.click(await screen.findByRole('button', { name: /Suggest with/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply suggestion' }));
+
+    expect((screen.getByLabelText('Population') as HTMLInputElement).value).toBe('Adults');
+    expect(screen.getByLabelText('Concept')).toBeTruthy();
+    expect(screen.getByText('AI prompt to consider: Look for recent reviews.')).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save review question' }));
+    expect(await screen.findByText('Review question saved.')).toBeTruthy();
+    const saved = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
+    expect(JSON.parse(String(saved?.[1]?.body))).toMatchObject({ framework: 'PCC', elements: { population: 'Adults', concept: '' } });
   });
 
   it('explains when a project cannot be opened', async () => {

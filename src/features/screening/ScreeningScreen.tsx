@@ -26,7 +26,7 @@ export function ScreeningScreen() {
   const { handleRunAbstractScreening, abstractLoading, abstractProgress, literatureResults, handleUserDecision, goTo } = useWorkspace();
   return (
     <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
-      <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>5. Abstract Screening</h3>
+      <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>Abstract Screening</h3>
       <WorkspaceStageGate stage="screening" />
 
       <button className="btn-primary" onClick={handleRunAbstractScreening} disabled={abstractLoading} style={{ marginBottom: '24px', background: 'linear-gradient(135deg, #10b981, #059669)', padding: '12px 24px' }}>

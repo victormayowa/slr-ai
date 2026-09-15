@@ -14,6 +14,7 @@ from database import get_db
 from llm.prompts import PROTOCOL_PROMPT
 from permissions import Permission
 from projects_routes import ProjectAccess, get_in_project, project_access
+from protocol_frameworks import FRAMEWORKS, criterion_element_keys
 from rate_limiting import ai_rate_limit
 from services.ai_protocol import generate_protocol_elements
 from services.ai_screening import ROB_TOOL_DOMAINS
@@ -37,6 +38,14 @@ class ProtocolUpdate(BaseModel):
 class CriterionUpdate(BaseModel):
     status: Literal["pending", "accepted", "rejected"] | None = None
     text: str | None = Field(None, min_length=1, max_length=2000)
+    # An element key, or "" to unlink the criterion.
+    element: str | None = Field(None, max_length=40)
+
+
+class CriterionCreate(BaseModel):
+    kind: Literal["inclusion", "exclusion"]
+    text: str = Field(min_length=1, max_length=2000)
+    element: str | None = Field(None, max_length=40)
 
 
 class AcceptAllRequest(BaseModel):
@@ -64,7 +73,23 @@ def protocol_out(protocol: models.Protocol) -> dict:
 
 
 def criterion_out(criterion: models.Criterion) -> dict:
-    return {"id": criterion.id, "kind": criterion.kind, "text": criterion.text, "status": criterion.status}
+    return {
+        "id": criterion.id,
+        "kind": criterion.kind,
+        "text": criterion.text,
+        "status": criterion.status,
+        "element": criterion.element,
+        "source": criterion.source,
+    }
+
+
+def _checked_element(project: models.Project, element: str | None) -> str | None:
+    if not element:
+        return None
+    framework = project.protocol.framework if project.protocol else ""
+    if element not in criterion_element_keys(framework):
+        raise HTTPException(status_code=422, detail=f"Unknown criterion element for {framework}: {element}")
+    return element
 
 
 def strategy_out(strategy: models.SearchStrategy) -> dict:
@@ -122,6 +147,8 @@ def update_protocol(
     require_stage_open(db, access.project.id, "protocol")
     if body.rob_tool not in ROB_TOOL_DOMAINS:
         raise HTTPException(status_code=422, detail=f"Unsupported risk of bias tool: {body.rob_tool}")
+    if body.framework not in FRAMEWORKS:
+        raise HTTPException(status_code=422, detail=f"Unknown question framework: {body.framework}")
     protocol = access.project.protocol
     if protocol is None:
         raise HTTPException(status_code=404, detail="This project has no protocol")
@@ -153,11 +180,18 @@ async def generate_protocol(
     if protocol is None or not protocol.description.strip():
         raise HTTPException(status_code=400, detail="Describe the study in Project Setup before generating a protocol")
 
+    framework = FRAMEWORKS.get(protocol.framework)
+    element_lines = [
+        f"{element.label} ({element.key}): {protocol.question_elements.get(element.key, '')}"
+        for element in (framework.elements if framework else ())
+    ]
     research_question = "\n".join(
         [
             f"Title: {project.title}",
             f"Review Type: {protocol.review_type}",
             f"Framework: {protocol.framework}",
+            f"Review Question: {protocol.question}",
+            *element_lines,
             f"Description: {protocol.description}",
             f"Suggested Criteria: {protocol.suggested_criteria}",
         ]
@@ -165,7 +199,7 @@ async def generate_protocol(
     ai = project_ai(db, access)
     run = new_ai_run(access, "protocol", PROTOCOL_PROMPT, ai)
     try:
-        result = await generate_protocol_elements(ai, research_question)
+        result = await generate_protocol_elements(ai, research_question, criterion_element_keys(protocol.framework))
     except LLMError as exc:
         run.status, run.error = "failed", str(exc)
         record_usage(run, ai, exc.usage)
@@ -182,9 +216,17 @@ async def generate_protocol(
         delete(models.Criterion).where(models.Criterion.project_id == project.id, models.Criterion.status == "pending")
     )
     db.execute(delete(models.SearchStrategy).where(models.SearchStrategy.project_id == project.id))
-    for kind, texts in (("inclusion", generated.inclusion_criteria), ("exclusion", generated.exclusion_criteria)):
-        for text in texts:
-            db.add(models.Criterion(project_id=project.id, kind=kind, text=text[:2000], status="pending"))
+    for kind, suggested in (("inclusion", generated.inclusion_criteria), ("exclusion", generated.exclusion_criteria)):
+        for criterion in suggested:
+            db.add(
+                models.Criterion(
+                    project_id=project.id,
+                    kind=kind,
+                    text=criterion.text[:2000],
+                    element=criterion.element,
+                    status="pending",
+                )
+            )
     for search in generated.boolean_searches:
         db.add(models.SearchStrategy(project_id=project.id, database=search.database[:100], query=search.string))
     added_fields = _add_extraction_fields(project, protocol.extraction_outline.splitlines())
@@ -232,6 +274,8 @@ def update_criterion(
     require_stage_open(db, access.project.id, "protocol")
     criterion = get_in_project(db, models.Criterion, criterion_id, access.project.id, "Criterion")
     updates = body.model_dump(exclude_none=True)
+    if "element" in updates:
+        updates["element"] = _checked_element(access.project, updates["element"])
     for name, value in updates.items():
         setattr(criterion, name, value)
     if updates:
@@ -244,6 +288,37 @@ def update_criterion(
             entity_id=criterion.id,
             details=updates,
         )
+    db.commit()
+    return criterion_out(criterion)
+
+
+@router.post("/criteria", status_code=201)
+def add_criterion(
+    body: CriterionCreate,
+    access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)),
+    db: Session = Depends(get_db),
+):
+    """Add a criterion written by a reviewer. It starts accepted, because a reviewer wrote it."""
+    require_stage_open(db, access.project.id, "protocol")
+    criterion = models.Criterion(
+        project_id=access.project.id,
+        kind=body.kind,
+        text=body.text.strip(),
+        element=_checked_element(access.project, body.element),
+        status="accepted",
+        source="reviewer",
+    )
+    db.add(criterion)
+    db.flush()
+    record_event(
+        db,
+        project_id=access.project.id,
+        actor_id=access.user.id,
+        action="criterion.added",
+        entity_type="criterion",
+        entity_id=criterion.id,
+        details={"kind": criterion.kind, "text": criterion.text, "element": criterion.element},
+    )
     db.commit()
     return criterion_out(criterion)
 

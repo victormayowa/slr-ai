@@ -18,7 +18,7 @@ export function ExtractionFieldsScreen() {
 
   return (
     <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
-      <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>6. Define Full-Text Extraction Rules</h3>
+      <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>Define Full-Text Extraction Rules</h3>
       <WorkspaceStageGate stage="protocol" />
       <p style={{ color: 'var(--text-secondary)', marginBottom: '24px' }}>Remove any variables you do not need, and add standard or custom ones.</p>
 

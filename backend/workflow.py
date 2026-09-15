@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session, selectinload
 import models
 from audit import record_event
 from permissions import Permission
+from protocol_design import project_sections, protocol_issues
+from protocol_frameworks import PROTOCOL_SECTIONS, REQUIRED_SECTIONS
 from review_data import TITLE_ABSTRACT, final_decision, find_duplicates, has_successful_run, latest_run
 
 STAGES = ["protocol", "search", "screening", "extraction", "appraisal", "synthesis"]
@@ -41,7 +43,18 @@ STAGE_PERMISSIONS = {
     "synthesis": Permission.APPROVE_ANALYSIS,
 }
 
-PROTOCOL_FIELDS = ("review_type", "framework", "description", "suggested_criteria", "extraction_outline", "rob_tool")
+PROTOCOL_FIELDS = (
+    "review_type",
+    "framework",
+    "description",
+    "suggested_criteria",
+    "extraction_outline",
+    "rob_tool",
+    "question",
+    "question_elements",
+    "finer",
+    "analysis_plan",
+)
 
 
 class WorkflowError(Exception):
@@ -123,15 +136,26 @@ def requirements(db: Session, project: models.Project, stage: str) -> list[Requi
     if stage == "protocol":
         protocol = project.protocol
         criteria = db.scalars(select(models.Criterion).where(models.Criterion.project_id == project.id)).all()
+        issue_codes = {issue.code for issue in protocol_issues(db, project) if issue.severity == "error"}
+        required_sections = ", ".join(section.label for section in REQUIRED_SECTIONS)
         return [
             Requirement("Study description written", bool(protocol and protocol.description.strip())),
+            Requirement(
+                "Review question and every framework element written",
+                not issue_codes & {"no_protocol", "question_missing", "framework_unknown", "element_missing"},
+            ),
             Requirement(
                 "At least one accepted inclusion criterion",
                 any(c.kind == "inclusion" and c.status == "accepted" for c in criteria),
             ),
             Requirement("Every suggested criterion accepted or rejected", all(c.status != "pending" for c in criteria)),
+            Requirement("No criterion both included and excluded", "contradictory_criteria" not in issue_codes),
             Requirement("At least one search strategy", _count(db, models.SearchStrategy, project.id) > 0),
             Requirement("At least one extraction field", bool(project.extraction_fields)),
+            Requirement("At least one primary outcome pre-specified", "no_primary_outcome" not in issue_codes),
+            Requirement(
+                f"Required protocol sections written ({required_sections})", "section_missing" not in issue_codes
+            ),
         ]
     if stage == "synthesis":
         return [Requirement("A synthesis report generated", _count(db, models.SynthesisReport, project.id) > 0)]
@@ -179,9 +203,18 @@ def _snapshot_content(db: Session, project: models.Project, stage: str) -> dict[
             .where(models.SearchStrategy.project_id == project.id)
             .order_by(models.SearchStrategy.id)
         )
+        sections = project_sections(db, project.id)
         return {
             "protocol": {name: getattr(protocol, name) for name in PROTOCOL_FIELDS} if protocol else None,
-            "criteria": [{"kind": c.kind, "text": c.text, "status": c.status} for c in criteria],
+            "criteria": [
+                {"kind": c.kind, "text": c.text, "status": c.status, "element": c.element, "source": c.source}
+                for c in criteria
+            ],
+            "sections": {
+                section.key: sections[section.key].content
+                for section in PROTOCOL_SECTIONS
+                if section.key in sections and sections[section.key].content
+            },
             "search_strategies": [{"database": s.database, "query": s.query} for s in strategies],
             "extraction_fields": [field.name for field in project.extraction_fields],
         }

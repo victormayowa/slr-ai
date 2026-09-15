@@ -30,7 +30,7 @@ class PromptTemplate:
 
 PROTOCOL_PROMPT = PromptTemplate(
     "protocol",
-    2,
+    3,
     """You are an expert systematic reviewer and medical librarian.
 Based on the research question below, draft specific inclusion criteria, exclusion criteria, and Boolean search
 strings for the major bibliographic databases.
@@ -47,7 +47,9 @@ Aim for at least 15 distinct inclusion criteria and at least 15 distinct exclusi
 - Outcomes (primary, secondary, adverse events)
 - Study design (randomized or observational designs, publication dates, language)
 
-Write each criterion as one self-contained statement. For boolean_searches, give one entry per database with the
+Write each criterion as one self-contained statement, and set its element to the key of what it restricts, one of:
+$elements.
+For boolean_searches, give one entry per database with the
 database name (for example PubMed or Embase) and a complete search string in that database's syntax.""",
 )
 
@@ -145,6 +147,67 @@ $query
 Reply in plain text or simple Markdown.""",
 )
 
+QUESTION_PROMPT = PromptTemplate(
+    "question",
+    1,
+    """You help researchers turn a topic into a structured systematic review question.
+$untrusted_text_note
+
+<research_question>
+$topic
+</research_question>
+
+Available question frameworks, with the key, label, and meaning of each element:
+$frameworks
+
+Choose the framework that best fits the topic and review type. Fill in each of its elements with a short phrase, using
+only what the topic states or clearly implies. If the topic doesn't say, use an empty string so reviewers fill it in.
+Write the review question as one sentence built from the elements.
+For each FINER criterion (feasible, interesting, novel, ethical, relevant), write one sentence on what the reviewers
+should check. These notes prompt the reviewers' own judgment; they aren't verdicts.""",
+)
+
+SECTION_DRAFT_PROMPT = PromptTemplate(
+    "section",
+    1,
+    """You are drafting one section of a systematic review protocol that follows PRISMA-P.
+$untrusted_text_note
+
+Section: $section_label (PRISMA-P item $prisma_item)
+What the section should cover: $guidance
+
+<project>
+$project
+</project>
+
+Draft the section using only the project information above. Never invent facts that aren't given, such as
+registration numbers, funders, author names, affiliations, databases, dates, study counts, or statistics. Where the
+section needs information that isn't provided, insert a placeholder in square brackets, such as
+[TO COMPLETE: funding source], and list each missing item in missing_information.
+Write in formal academic English, using the future tense for planned methods. Don't repeat the section heading.""",
+)
+
+CONSISTENCY_PROMPT = PromptTemplate(
+    "consistency",
+    1,
+    """You are a systematic review methodologist checking a draft protocol for internal consistency before it's locked.
+$untrusted_text_note
+
+<project>
+$project
+</project>
+
+Report only real problems, such as:
+- a criterion that contradicts the review question or its elements, such as including a population the question
+  leaves out
+- criteria that conflict with each other
+- outcomes in the question that the analysis plan doesn't pre-specify, or planned outcomes the question doesn't mention
+- criteria too vague for two reviewers to apply the same way
+Refer to criteria by their id in criterion_ids and to question elements by their key in elements. Use severity "error"
+for problems that would make screening or synthesis inconsistent, and "warning" otherwise. Return an empty issues
+list if the protocol is consistent.""",
+)
+
 PROMPTS = {
     prompt.name: prompt
     for prompt in (
@@ -154,5 +217,8 @@ PROMPTS = {
         APPRAISAL_PROMPT,
         SYNTHESIS_PROMPT,
         FAQ_PROMPT,
+        QUESTION_PROMPT,
+        SECTION_DRAFT_PROMPT,
+        CONSISTENCY_PROMPT,
     )
 }

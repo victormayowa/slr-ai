@@ -16,7 +16,7 @@ export function RiskOfBiasScreen() {
 
   return (
     <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
-      <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>9. Quality Assessment & Risk of Bias</h3>
+      <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>Quality Assessment & Risk of Bias</h3>
       <WorkspaceStageGate stage="appraisal" />
       <div style={{ display: 'flex', gap: '16px', marginBottom: '32px' }}>
         <div style={{ flex: 1 }}>

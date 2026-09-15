@@ -22,7 +22,7 @@ export function SearchScreen() {
 
   return (
     <section className="glass-panel animate-fade-in" style={{ padding: '32px' }}>
-      <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>3. Database Search & Manual Import</h3>
+      <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>Database Search & Manual Import</h3>
       <WorkspaceStageGate stage="search" />
 
       <div style={{ marginBottom: '32px' }}>

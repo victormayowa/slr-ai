@@ -21,6 +21,8 @@ from database import engine, get_db
 from jobs_routes import router as jobs_router
 from observability import RequestIdMiddleware, configure_logging, configure_sentry
 from projects_routes import router as projects_router
+from protocol_design_routes import catalog_router as protocol_catalog_router
+from protocol_design_routes import router as protocol_design_router
 from rate_limiting import ai_rate_limit
 from records_routes import router as records_router
 from review_routes import router as review_router
@@ -79,6 +81,8 @@ app.include_router(audit_router)
 app.include_router(workflow_router)
 app.include_router(ai_router)
 app.include_router(jobs_router)
+app.include_router(protocol_design_router)
+app.include_router(protocol_catalog_router)
 
 
 @app.exception_handler(TaskNotReady)

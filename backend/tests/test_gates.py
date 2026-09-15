@@ -7,6 +7,7 @@ from workflow_helpers import (
     complete_stage,
     create_project,
     decide,
+    design_protocol,
     generate_protocol,
     import_records,
     lock_protocol,
@@ -37,8 +38,11 @@ def test_a_new_project_starts_with_only_the_protocol_open(client, project):
     unmet = [r["label"] for r in stages["protocol"]["requirements"] if not r["met"]]
     assert unmet == [
         "Study description written",
+        "Review question and every framework element written",
         "At least one accepted inclusion criterion",
         "At least one search strategy",
+        "At least one primary outcome pre-specified",
+        "Required protocol sections written (Rationale, Objectives, Data synthesis)",
     ]
 
 
@@ -154,6 +158,7 @@ def test_only_permitted_roles_can_sign_off_each_stage(client, project, make_user
     generate_protocol(client, project_id, owner, fake_provider)
     for kind in ("inclusion", "exclusion"):
         client.post(url(project_id, "criteria/accept-all"), json={"kind": kind}, headers=owner)
+    design_protocol(client, project_id, owner)
     screener = add_member(client, project_id, owner, make_user, "screener")
     statistician = add_member(client, project_id, owner, make_user, "statistician")
     methodologist = add_member(client, project_id, owner, make_user, "methodologist")

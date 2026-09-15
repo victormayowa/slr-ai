@@ -74,7 +74,7 @@ function EmbeddingModelPicker() {
 
 export function SetupScreen() {
   const {
-    projectName, setProjectName, reviewType, setReviewType, framework, setFramework, studyDescription, setStudyDescription,
+    projectName, setProjectName, reviewType, setReviewType, studyDescription, setStudyDescription,
     suggestedCriteria, setSuggestedCriteria, extractionOutline, setExtractionOutline, protocolLoading, handleSaveSetup, handleGenerateProtocol,
   } = useWorkspace();
 
@@ -95,14 +95,6 @@ export function SetupScreen() {
             <option>Rapid Review</option>
             <option>Umbrella Review</option>
             <option>Meta-Analysis</option>
-          </select>
-        </div>
-        <div>
-          <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>Eligibility Framework</label>
-          <select className="search-input" value={framework} onChange={e => setFramework(e.target.value)}>
-            <option>PICO</option>
-            <option>PECO</option>
-            <option>SPIDER</option>
           </select>
         </div>
         <AiModelPicker />

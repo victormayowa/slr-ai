@@ -9,7 +9,7 @@ export function ExtractionScreen() {
 
   return (
     <section className="glass-panel animate-fade-in" style={{ padding: '32px', border: '1px solid var(--accent-primary)' }}>
-      <h3 style={{ marginBottom: '16px', color: 'var(--accent-primary)' }}>7. Full-Text Screening & Batch Extraction</h3>
+      <h3 style={{ marginBottom: '16px', color: 'var(--accent-primary)' }}>Full-Text Screening & Batch Extraction</h3>
       <WorkspaceStageGate stage="extraction" />
       <p style={{ color: 'var(--text-secondary)' }}>Full-text PDF retrieval is not available yet. Extraction currently reads only the title and abstract of each paper you accepted, so verify every value against the full article.</p>
       <button className="btn-primary" onClick={handleRunFullTextPipeline} disabled={fullTextLoading} style={{ marginTop: '24px', background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)', padding: '16px 32px', marginBottom: '24px' }}>

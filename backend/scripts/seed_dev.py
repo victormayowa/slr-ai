@@ -134,14 +134,14 @@ DEMO_SUGGESTED_CRITERIA = (
     "low-dose aspirin compared with placebo or no treatment."
 )
 
-# (kind, text, status)
+# (kind, text, status, element)
 DEMO_CRITERIA = [
-    ("inclusion", "Randomized controlled trials", "accepted"),
-    ("inclusion", "Adults aged 18 or older without established cardiovascular disease", "accepted"),
-    ("inclusion", "Daily aspirin of 325 mg or less compared with placebo or no treatment", "accepted"),
-    ("inclusion", "Reports major adverse cardiovascular events", "accepted"),
-    ("exclusion", "Participants with prior myocardial infarction or stroke", "accepted"),
-    ("exclusion", "Observational or non-randomized designs", "rejected"),
+    ("inclusion", "Randomized controlled trials", "accepted", "study_design"),
+    ("inclusion", "Adults aged 18 or older without established cardiovascular disease", "accepted", "population"),
+    ("inclusion", "Daily aspirin of 325 mg or less compared with placebo or no treatment", "accepted", "intervention"),
+    ("inclusion", "Reports major adverse cardiovascular events", "accepted", "outcomes"),
+    ("exclusion", "Participants with prior myocardial infarction or stroke", "accepted", "population"),
+    ("exclusion", "Observational or non-randomized designs", "rejected", "study_design"),
 ]
 
 DEMO_STRATEGIES = [
@@ -239,6 +239,85 @@ DEMO_IMPORTS = [
 ]
 
 
+DEMO_QUESTION = (
+    "In adults without established cardiovascular disease, does daily low-dose aspirin, compared with placebo or no "
+    "treatment, reduce major adverse cardiovascular events?"
+)
+DEMO_QUESTION_ELEMENTS = {
+    "population": "Adults aged 18 or older without established cardiovascular disease",
+    "intervention": "Daily aspirin of 325 mg or less",
+    "comparator": "Placebo or no treatment",
+    "outcomes": "Major adverse cardiovascular events, all-cause mortality, and major bleeding",
+}
+DEMO_FINER = {
+    "feasible": {"rating": "yes", "note": "Several large placebo-controlled trials are published."},
+    "interesting": {"rating": "yes", "note": ""},
+    "novel": {
+        "rating": "partly",
+        "note": "Earlier reviews exist; recent trials in older adults may change conclusions.",
+    },
+    "ethical": {"rating": "yes", "note": ""},
+    "relevant": {"rating": "yes", "note": "Guideline recommendations on aspirin for primary prevention are changing."},
+}
+DEMO_ANALYSIS_PLAN = {
+    "synthesis_approach": "meta_analysis",
+    "outcomes": [
+        {
+            "name": "Major adverse cardiovascular events",
+            "priority": "primary",
+            "timepoint": "End of follow-up",
+            "measure": "Risk ratio",
+        },
+        {
+            "name": "All-cause mortality",
+            "priority": "secondary",
+            "timepoint": "End of follow-up",
+            "measure": "Risk ratio",
+        },
+        {"name": "Major bleeding", "priority": "adverse", "timepoint": "End of follow-up", "measure": "Risk ratio"},
+    ],
+    "subgroups": [
+        {"name": "Age 70 or older", "rationale": "Bleeding risk rises with age."},
+        {"name": "Diabetes", "rationale": "Higher baseline cardiovascular risk."},
+    ],
+    "sensitivity_analyses": [{"name": "Excluding trials at high risk of bias", "rationale": ""}],
+    "heterogeneity": "Assessed with I² and prediction intervals; random-effects models by default.",
+}
+DEMO_SECTIONS = {
+    "rationale": (
+        "Demo text: aspirin reduces cardiovascular events after a heart attack or stroke, but its benefit for people "
+        "without cardiovascular disease is uncertain because it also increases bleeding."
+    ),
+    "objectives": (
+        "Demo text: to assess the effects of daily low-dose aspirin, compared with placebo or no treatment, on major "
+        "adverse cardiovascular events, all-cause mortality, and major bleeding in adults without established "
+        "cardiovascular disease."
+    ),
+    "synthesis": (
+        "Demo text: risk ratios will be pooled with random-effects meta-analysis. Heterogeneity will be assessed with "
+        "I² and prediction intervals, with subgroup analyses by age and diabetes."
+    ),
+}
+
+
+def _seed_demo_protocol_design(db: Session, project: models.Project) -> None:
+    """Give the demo protocol a structured question, FINER assessment, analysis plan, and required sections, once."""
+    protocol = project.protocol
+    if protocol is None:
+        return
+    if not protocol.question:
+        protocol.question = DEMO_QUESTION
+        protocol.question_elements = DEMO_QUESTION_ELEMENTS
+        protocol.finer = DEMO_FINER
+        protocol.analysis_plan = DEMO_ANALYSIS_PLAN
+    existing = set(
+        db.scalars(select(models.ProtocolSection.key).where(models.ProtocolSection.project_id == project.id))
+    )
+    for key, content in DEMO_SECTIONS.items():
+        if key not in existing:
+            db.add(models.ProtocolSection(project_id=project.id, key=key, content=content))
+
+
 def _seed_demo_review(db: Session, project: models.Project, users: dict[str, models.User]) -> None:
     """Give the demo project protocol settings, criteria, search strings, and fictional records, once."""
     db.flush()
@@ -248,13 +327,15 @@ def _seed_demo_review(db: Session, project: models.Project, users: dict[str, mod
         protocol.suggested_criteria = DEMO_SUGGESTED_CRITERIA
         protocol.extraction_outline = "Country\nFollow-up (years)"
 
+    _seed_demo_protocol_design(db, project)
+
     def project_has(model) -> bool:
         return db.scalar(select(model.id).where(model.project_id == project.id).limit(1)) is not None
 
     if not project_has(models.Criterion):
         db.add_all(
-            models.Criterion(project_id=project.id, kind=kind, text=text, status=status)
-            for kind, text, status in DEMO_CRITERIA
+            models.Criterion(project_id=project.id, kind=kind, text=text, status=status, element=element)
+            for kind, text, status, element in DEMO_CRITERIA
         )
     if not project_has(models.SearchStrategy):
         db.add_all(

@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { modelDisplayName, type AiModelInfo } from '../../api/ai';
 import { ApiError, errorMessage } from '../../api/client';
 import { jobProblem, jobProgress, waitForJob, type AiJob } from '../../api/jobs';
+import type { ProtocolCatalog } from '../../api/protocol';
 import type { ProjectSummary } from '../../api/projects';
 import { toPaper, type ApiRecord, type CriterionInfo, type Paper, type PrismaCounts, type ProtocolSettings, type SimilarPairs, type StrategyInfo, type WorkflowStageInfo } from '../../api/review';
 import { batchLimit } from '../../app/plan';
@@ -12,7 +13,13 @@ import type { ProjectTab } from './tabs';
 import type { ProtocolItem, SearchItem } from './types';
 
 const splitCriteria = (criteria: CriterionInfo[]) => {
-  const toItem = (criterion: CriterionInfo): ProtocolItem => ({ id: String(criterion.id), text: criterion.text, status: criterion.status });
+  const toItem = (criterion: CriterionInfo): ProtocolItem => ({
+    id: String(criterion.id),
+    text: criterion.text,
+    status: criterion.status,
+    element: criterion.element,
+    source: criterion.source,
+  });
   return {
     inclusion: criteria.filter(c => c.kind === 'inclusion').map(toItem),
     exclusion: criteria.filter(c => c.kind === 'exclusion').map(toItem),
@@ -30,6 +37,7 @@ export function useProjectWorkspaceState(projectId: number) {
   const [currentProject, setCurrentProject] = useState<ProjectSummary | null>(null);
   const [aiModels, setAiModels] = useState<AiModelInfo[]>([]);
   const [embeddingModels, setEmbeddingModels] = useState<AiModelInfo[]>([]);
+  const [protocolCatalog, setProtocolCatalog] = useState<ProtocolCatalog | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [projectName, setProjectName] = useState('');
 
@@ -95,8 +103,9 @@ export function useProjectWorkspaceState(projectId: number) {
       apiRequest('GET', `${base}/workflow`),
       apiRequest('GET', '/api/ai/models'),
       apiRequest('GET', '/api/ai/models?purpose=embedding'),
+      apiRequest('GET', '/api/protocol-frameworks'),
     ])
-      .then(([project, protocol, criteria, strategies, fields, synthesis, records, counts, stages, models, embeddingModelList]) => {
+      .then(([project, protocol, criteria, strategies, fields, synthesis, records, counts, stages, models, embeddingModelList, catalog]) => {
         if (cancelled) return;
         const papers = (records as ApiRecord[]).map(toPaper);
         const { inclusion, exclusion } = splitCriteria(criteria);
@@ -119,6 +128,7 @@ export function useProjectWorkspaceState(projectId: number) {
         setWorkflow(stages);
         setAiModels(models);
         setEmbeddingModels(embeddingModelList);
+        setProtocolCatalog(catalog);
       })
       .catch(err => {
         if (!cancelled) setLoadError(errorMessage(err, 'Could not load this project.'));
@@ -302,6 +312,30 @@ export function useProjectWorkspaceState(projectId: number) {
       await loadWorkflow();
     } catch (err) {
       alert(errorMessage(err, 'Could not update the criterion.'));
+    }
+  };
+
+  const handleCriterionElement = async (id: string, element: string) => {
+    try {
+      const updated: CriterionInfo = await apiRequest('PATCH', projectPath(`criteria/${id}`), { element });
+      const update = (items: ProtocolItem[]) => items.map(item => (item.id === id ? { ...item, element: updated.element } : item));
+      setInclusionItems(update);
+      setExclusionItems(update);
+    } catch (err) {
+      alert(errorMessage(err, 'Could not link the criterion.'));
+    }
+  };
+
+  // Returns whether the criterion was added, so the form can clear itself.
+  const handleAddCriterion = async (kind: 'inclusion' | 'exclusion', text: string, element: string | null) => {
+    try {
+      await apiPost(projectPath('criteria'), { kind, text, element });
+      applyCriteria(await apiRequest('GET', projectPath('criteria')));
+      await loadWorkflow();
+      return true;
+    } catch (err) {
+      alert(errorMessage(err, 'Could not add the criterion.'));
+      return false;
     }
   };
 
@@ -569,6 +603,10 @@ export function useProjectWorkspaceState(projectId: number) {
     handleGenerateProtocol,
     handleCriterionStatus,
     handleAcceptAll,
+    handleCriterionElement,
+    handleAddCriterion,
+    protocolCatalog,
+    refreshWorkflow: loadWorkflow,
     saveSearchString,
     handleRunDatabaseSearch,
     importCsvFile,

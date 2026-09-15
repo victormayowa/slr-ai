@@ -18,10 +18,32 @@ PROTOCOL = {
     "rob_tool": "ROB-2",
 }
 GENERATED_PROTOCOL = (
-    '{"inclusion_criteria": ["Adults", "Randomized trials"], "exclusion_criteria": ["Children"],'
+    '{"inclusion_criteria": [{"text": "Adults", "element": "population"},'
+    ' {"text": "Randomized trials", "element": "study_design"}],'
+    ' "exclusion_criteria": [{"text": "Children", "element": "population"}],'
     ' "boolean_searches": [{"database": "PubMed", "string": "aspirin[tiab]"},'
     ' {"database": "Embase", "string": "aspirin"}]}'
 )
+QUESTION = {
+    "framework": "PICO",
+    "question": "Does aspirin prevent heart attacks in adults?",
+    "elements": {
+        "population": "Adults",
+        "intervention": "Aspirin",
+        "comparator": "Placebo",
+        "outcomes": "Heart attacks",
+    },
+    "finer": {},
+}
+ANALYSIS_PLAN = {
+    "synthesis_approach": "meta_analysis",
+    "outcomes": [{"name": "Myocardial infarction", "priority": "primary"}],
+}
+REQUIRED_SECTIONS = {
+    "rationale": "Aspirin may prevent heart attacks, but trials disagree.",
+    "objectives": "To assess whether aspirin prevents heart attacks in adults.",
+    "synthesis": "Random-effects meta-analysis of risk ratios.",
+}
 EXTRACTION_REPLY = '{"values": [{"field": "Sample Size", "value": 120, "quote": "Adults randomized to aspirin."}]}'
 APPRAISAL_REPLY = (
     '{"domains": [{"domain": "D1: Randomization", "judgment": "Low", "rationale": "Randomized."}],'
@@ -86,11 +108,21 @@ def complete_stage(client, project_id, headers, stage, note="Reviewed and approv
     return {item["stage"]: item for item in response.json()}
 
 
+def design_protocol(client, project_id, headers):
+    """Write the review question, analysis plan, and required protocol sections."""
+    assert client.put(url(project_id, "question"), json=QUESTION, headers=headers).status_code == 200
+    assert client.put(url(project_id, "analysis-plan"), json=ANALYSIS_PLAN, headers=headers).status_code == 200
+    for key, content in REQUIRED_SECTIONS.items():
+        response = client.put(url(project_id, f"protocol-sections/{key}"), json={"content": content}, headers=headers)
+        assert response.status_code == 200, response.text
+
+
 def lock_protocol(client, project_id, headers, fake_provider):
-    """Generate a protocol, accept every criterion, and sign off the protocol stage."""
+    """Generate a protocol, accept every criterion, design the protocol, and sign off the protocol stage."""
     generated = generate_protocol(client, project_id, headers, fake_provider)
     for kind in ("inclusion", "exclusion"):
         client.post(url(project_id, "criteria/accept-all"), json={"kind": kind}, headers=headers)
+    design_protocol(client, project_id, headers)
     complete_stage(client, project_id, headers, "protocol")
     return generated
 

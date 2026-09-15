@@ -1,4 +1,11 @@
-export type CriterionInfo = { id: number; kind: 'inclusion' | 'exclusion'; text: string; status: 'pending' | 'accepted' | 'rejected' };
+export type CriterionInfo = {
+  id: number;
+  kind: 'inclusion' | 'exclusion';
+  text: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  element: string | null;
+  source: 'ai' | 'reviewer';
+};
 
 export type StrategyInfo = { id: number; database: string; query: string };
 

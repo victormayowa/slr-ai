@@ -172,7 +172,7 @@ class ProjectMember(Base):
 
 
 class Protocol(Base):
-    """Review setup for a project. Versioning and locking arrive with the workflow gates."""
+    """Review setup for a project, its structured question, and its analysis plan. Versioned by protocol sign-off."""
 
     __tablename__ = "protocols"
 
@@ -184,6 +184,13 @@ class Protocol(Base):
     suggested_criteria: Mapped[str] = mapped_column(Text, default="")
     extraction_outline: Mapped[str] = mapped_column(Text, default="")
     rob_tool: Mapped[str] = mapped_column(String(30), default="ROB-2")
+    # The review question in one sentence, and the text of each element of the framework (protocol_frameworks).
+    question: Mapped[str] = mapped_column(Text, default="", server_default="")
+    question_elements: Mapped[dict[str, str]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    # {criterion: {"rating": "yes" | "partly" | "no", "note": str}} for the FINER criteria.
+    finer: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    # Pre-specified outcomes, subgroup and sensitivity analyses, and synthesis approach (protocol_design_routes).
+    analysis_plan: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     project: Mapped[Project] = relationship(back_populates="protocol")
@@ -199,6 +206,10 @@ class Criterion(Base):
     text: Mapped[str] = mapped_column(Text)
     # "pending", "accepted", or "rejected"
     status: Mapped[str] = mapped_column(String(10), default="pending")
+    # What the criterion restricts: a question element or a general element (protocol_frameworks).
+    element: Mapped[str | None] = mapped_column(String(40))
+    # "ai" when suggested by AI, "reviewer" when a reviewer wrote it.
+    source: Mapped[str] = mapped_column(String(10), default="ai", server_default="ai")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -483,3 +494,44 @@ class AIJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_by: Mapped[User | None] = relationship()
+
+
+class ProtocolSuggestion(Base):
+    """AI output for protocol design: a structured question, a section draft, or a consistency review.
+
+    Never applied automatically; a reviewer saves what they accept.
+    """
+
+    __tablename__ = "protocol_suggestions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    ai_run_id: Mapped[int] = mapped_column(ForeignKey("ai_runs.id", ondelete="CASCADE"), unique=True)
+    # "question", "section", or "consistency"
+    kind: Mapped[str] = mapped_column(String(20))
+    section_key: Mapped[str | None] = mapped_column(String(40))
+    content: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    ai_run: Mapped[AIRun] = relationship()
+
+
+class ProtocolSection(Base):
+    """The text of one PRISMA-P section of the protocol document, as saved by a reviewer."""
+
+    __tablename__ = "protocol_sections"
+    __table_args__ = (UniqueConstraint("project_id", "key", name="uq_protocol_section"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    # A protocol_frameworks.PROTOCOL_SECTIONS key.
+    key: Mapped[str] = mapped_column(String(40))
+    content: Mapped[str] = mapped_column(Text)
+    # Set when the text came from an accepted AI draft, and kept through later edits.
+    based_on_suggestion_id: Mapped[int | None] = mapped_column(
+        ForeignKey("protocol_suggestions.id", ondelete="SET NULL")
+    )
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    updated_by: Mapped[User | None] = relationship()
