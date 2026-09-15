@@ -217,3 +217,19 @@ def search_semantic_scholar(query: str, limit: int) -> tuple[list[dict], int]:
         if len(papers) < batch or len(records) >= total:
             break
     return records[:limit], total
+
+
+def europepmc_found_seeds(query: str, pmids: list[str], dois: list[str]) -> set[str]:
+    """Which of these PMIDs and DOIs the query retrieves in Europe PMC."""
+    clauses = [f"(EXT_ID:{pmid} AND SRC:MED)" for pmid in pmids] + [f'DOI:"{doi}"' for doi in dois]
+    if not clauses:
+        return set()
+    data = _get_json(
+        "Europe PMC",
+        EUROPEPMC_URL,
+        {"query": f"({query}) AND ({' OR '.join(clauses)})", "format": "json", "resultType": "lite", "pageSize": "200"},
+    )
+    results = (data.get("resultList") or {}).get("result", [])
+    retrieved_pmids = {item.get("pmid") for item in results}
+    retrieved_dois = {(item.get("doi") or "").lower() for item in results}
+    return {pmid for pmid in pmids if pmid in retrieved_pmids} | {doi for doi in dois if doi in retrieved_dois}

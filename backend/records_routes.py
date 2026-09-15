@@ -129,6 +129,7 @@ def run_out(run: models.SearchRun) -> dict:
         "result_count": run.result_count,
         "total_available": run.total_available,
         "connector": run.connector,
+        "strategy_version": run.strategy_version,
         "interface": run.interface,
         "searched_on": run.searched_on,
         "file_format": run.file_format,
@@ -210,6 +211,7 @@ async def run_search(
     run = models.SearchRun(
         project_id=access.project.id,
         strategy_id=strategy.id,
+        strategy_version=strategy.version,
         kind=connector.kind,
         database=connector.label,
         source_label=source_label,

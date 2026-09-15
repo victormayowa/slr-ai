@@ -396,6 +396,20 @@ def _waive_demo_registration(db: Session, project: models.Project, lead: models.
     db.flush()
 
 
+def _waive_demo_press(db: Session, project: models.Project, lead: models.User) -> None:
+    exists = db.scalar(select(models.PressReview.id).where(models.PressReview.project_id == project.id).limit(1))
+    if exists is None:
+        db.add(
+            models.PressReview(
+                project_id=project.id,
+                reviewer_id=lead.id,
+                status="waived",
+                comment="Demo project for local testing; the strategies weren't peer reviewed.",
+            )
+        )
+        db.flush()
+
+
 def _advance_demo_workflow(db: Session, project: models.Project, lead: models.User) -> None:
     """Sign off the demo protocol and search (after deduplicating) so the demo opens at screening.
 
@@ -412,6 +426,7 @@ def _advance_demo_workflow(db: Session, project: models.Project, lead: models.Us
             continue
         if stage == "search":
             _waive_demo_registration(db, project, lead)
+            _waive_demo_press(db, project, lead)
             records = db.scalars(select(models.Record).where(models.Record.project_id == project.id)).all()
             duplicates = find_duplicates(records)
             for record in records:

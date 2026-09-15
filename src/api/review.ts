@@ -7,7 +7,7 @@ export type CriterionInfo = {
   source: 'ai' | 'reviewer';
 };
 
-export type StrategyInfo = { id: number; database: string; query: string };
+export type StrategyInfo = { id: number; database: string; query: string; version: number };
 
 export type ProtocolSettings = {
   review_type: string;

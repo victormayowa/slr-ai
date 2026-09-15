@@ -120,3 +120,19 @@ def find_openalex_reviews(query: str, limit: int = 5) -> list[dict]:
             }
         )
     return reviews
+
+
+def openalex_found_seeds(query: str, pmids: list[str], dois: list[str]) -> set[str]:
+    """Which of these PMIDs and DOIs the query retrieves in OpenAlex."""
+    found: set[str] = set()
+    if dois:
+        data = _get_works({"search": query, "filter": "doi:" + "|".join(dois), "per-page": 200})
+        retrieved = {(w.get("doi") or "").replace("https://doi.org/", "").lower() for w in data.get("results", [])}
+        found |= retrieved & set(dois)
+    if pmids:
+        data = _get_works({"search": query, "filter": "pmid:" + "|".join(pmids), "per-page": 200})
+        retrieved = {
+            ((w.get("ids") or {}).get("pmid") or "").rstrip("/").split("/")[-1] for w in data.get("results", [])
+        }
+        found |= retrieved & set(pmids)
+    return found

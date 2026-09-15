@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { errorMessage } from '../../api/client';
 import { matchConnector, matchImportOnly, type SearchRunInfo, type SearchSources } from '../../api/search';
+import { PRESS_STATUS_LABELS, syntaxForDatabase, type PressStatus, type PressStrategyStatus, type SearchQualityCatalog } from '../../api/searchQuality';
 import { useAuth } from '../../auth/authContext';
 import { WorkspaceStageGate } from '../project/WorkspaceStageGate';
 import type { SearchItem } from '../project/types';
 import { useWorkspace } from '../project/workspaceContext';
+import { MeshLookup, PressReviewPanel, RecallCheckPanel, SyntaxCheck, Tool, TranslatePanel, VersionHistory } from './StrategyTools';
 
 const panel = { background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '8px' } as const;
 const labelStyle = { display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)' } as const;
@@ -12,8 +14,27 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 type UploadForm = { database: string; source_type: 'database' | 'register' | 'other'; interface: string; searched_on: string; query: string };
 
-function StrategyCard({ item, sources, onSearched }: { item: SearchItem; sources: SearchSources | null; onSearched: (message: string) => void }) {
-  const { projectId, setSearchItems, saveSearchString } = useWorkspace();
+function StrategyCard({ item, sources, quality, press, onSearched, onQualityChanged }: {
+  item: SearchItem; sources: SearchSources | null; quality: SearchQualityCatalog | null; press: PressStrategyStatus | undefined;
+  onSearched: (message: string) => void; onQualityChanged: () => Promise<void>;
+}) {
+  const { projectId, setSearchItems, saveSearchString, reloadStrategies, stageInfo } = useWorkspace();
+  const locked = stageInfo('protocol')?.status === 'completed';
+  const [savedString, setSavedString] = useState(item.string);
+  const [note, setNote] = useState('');
+  const changed = item.string !== savedString;
+  const syntax = syntaxForDatabase(quality, item.database);
+
+  const saveChange = async () => {
+    if (await saveSearchString(item.id, item.string, note || undefined)) {
+      setSavedString(item.string);
+      setNote('');
+      await onQualityChanged();
+    }
+  };
+
+  const insert = (snippet: string) =>
+    setSearchItems(prev => prev.map(s => (s.id === item.id ? { ...s, string: s.string.trim() ? `${s.string.trim()} OR ${snippet}` : snippet } : s)));
   const { apiRequest } = useAuth();
   const matched = matchConnector(sources, item.database);
   const importOnly = matchImportOnly(sources, item.database);
@@ -25,7 +46,11 @@ function StrategyCard({ item, sources, onSearched }: { item: SearchItem; sources
   const run = async () => {
     setBusy(true);
     try {
-      await saveSearchString(item.id, item.string);
+      if (changed) {
+        onSearched('Save the change to the search string before running it.');
+        setBusy(false);
+        return;
+      }
       const result: SearchRunInfo = await apiRequest('POST', `/api/projects/${projectId}/searches`, {
         strategy_id: Number(item.id),
         connector: connector || null,
@@ -41,8 +66,20 @@ function StrategyCard({ item, sources, onSearched }: { item: SearchItem; sources
 
   return (
     <div style={{ ...panel, marginBottom: '12px' }}>
-      <strong style={{ fontSize: '1.1rem' }}>{item.database}</strong>
-      <textarea className="search-input" aria-label={`${item.database} search string`} style={{ width: '100%', height: '70px', resize: 'vertical', marginTop: '8px' }} value={item.string} onChange={e => setSearchItems(prev => prev.map(s => (s.id === item.id ? { ...s, string: e.target.value } : s)))} onBlur={() => saveSearchString(item.id, item.string)} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: '1.1rem' }}>{item.database}</strong>
+        <span style={{ fontSize: '0.8rem', color: press?.status === 'approved' ? '#10b981' : '#f59e0b' }}>
+          Version {item.version}{press ? ` · ${PRESS_STATUS_LABELS[press.status]}` : ''}
+        </span>
+      </div>
+      <textarea className="search-input" aria-label={`${item.database} search string`} style={{ width: '100%', height: '70px', resize: 'vertical', marginTop: '8px' }} value={item.string} onChange={e => setSearchItems(prev => prev.map(s => (s.id === item.id ? { ...s, string: e.target.value } : s)))} />
+      {changed && (
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', margin: '4px 0' }}>
+          {locked && <input aria-label={`Why the ${item.database} strategy changed`} className="search-input" style={{ flex: '1 1 260px' }} value={note} onChange={e => setNote(e.target.value)} placeholder="The protocol is locked: explain this change" />}
+          <button className="btn-glass" onClick={saveChange} disabled={locked && note.trim().length < 10} style={{ padding: '6px 12px' }}>Save change</button>
+          <button className="btn-glass" onClick={() => setSearchItems(prev => prev.map(s => (s.id === item.id ? { ...s, string: savedString } : s)))} style={{ padding: '6px 12px' }}>Undo</button>
+        </div>
+      )}
       {!matched && importOnly && (
         <p style={{ fontSize: '0.85rem', color: '#f59e0b', margin: '6px 0' }}>
           {importOnly.label} can't be searched from OmniReview. Run this string on {importOnly.interface}, export the results as {importOnly.export_hint}, and import the file below.
@@ -64,12 +101,22 @@ function StrategyCard({ item, sources, onSearched }: { item: SearchItem; sources
       </div>
       {(chosen ?? matched) && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '6px 0 0' }}>{(chosen ?? matched)!.syntax_note}</p>}
       {chosen && matched?.key !== chosen.key && <p style={{ fontSize: '0.8rem', color: '#f59e0b', margin: '4px 0 0' }}>This string was written for {item.database}; the run is labelled as {chosen.label} so PRISMA reports stay accurate.</p>}
+      <Tool title="Check syntax"><SyntaxCheck projectId={projectId} query={item.string} syntax={syntax} /></Tool>
+      <Tool title="Look up MeSH headings"><MeshLookup onInsert={insert} /></Tool>
+      {quality && syntax === 'pubmed' && (
+        <Tool title="Translate for another database">
+          <TranslatePanel projectId={projectId} strategyId={item.id} catalog={quality} locked={locked} onAdded={async () => { await reloadStrategies(); await onQualityChanged(); }} />
+        </Tool>
+      )}
+      {syntax && ['pubmed', 'europepmc', 'openalex'].includes(syntax) && <Tool title="Recall check with known articles"><RecallCheckPanel projectId={projectId} strategyId={item.id} /></Tool>}
+      {quality && <Tool title="PRESS peer review"><PressReviewPanel projectId={projectId} strategyId={item.id} catalog={quality} onSubmitted={onQualityChanged} /></Tool>}
+      <Tool title="Version history"><VersionHistory projectId={projectId} strategyId={item.id} version={item.version} /></Tool>
     </div>
   );
 }
 
 export function SearchScreen() {
-  const { projectId, searchItems, literatureResults, handleResetSearch, goTo, refreshRecords } = useWorkspace();
+  const { projectId, searchItems, literatureResults, handleResetSearch, goTo, refreshRecords, refreshWorkflow } = useWorkspace();
   const { apiRequest } = useAuth();
   const [sources, setSources] = useState<SearchSources | null>(null);
   const [runs, setRuns] = useState<SearchRunInfo[]>([]);
@@ -77,16 +124,22 @@ export function SearchScreen() {
   const [file, setFile] = useState<File | null>(null);
   const [upload, setUpload] = useState<UploadForm>({ database: '', source_type: 'database', interface: '', searched_on: today(), query: '' });
   const [importing, setImporting] = useState(false);
+  const [quality, setQuality] = useState<SearchQualityCatalog | null>(null);
+  const [press, setPress] = useState<PressStatus | null>(null);
+  const [waiverReason, setWaiverReason] = useState('');
 
   const loadRuns = useCallback(() => apiRequest('GET', `/api/projects/${projectId}/search-runs`), [apiRequest, projectId]);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([apiRequest('GET', `/api/projects/${projectId}/search-sources`), loadRuns()])
-      .then(([sourceCatalog, runList]) => {
+    const base = `/api/projects/${projectId}`;
+    Promise.all([apiRequest('GET', `${base}/search-sources`), loadRuns(), apiRequest('GET', `${base}/search-quality`), apiRequest('GET', `${base}/press-status`)])
+      .then(([sourceCatalog, runList, qualityCatalog, pressStatus]) => {
         if (cancelled) return;
         setSources(sourceCatalog);
         setRuns(runList);
+        setQuality(qualityCatalog);
+        setPress(pressStatus);
       })
       .catch(err => {
         if (!cancelled) setNotice(errorMessage(err, 'Could not load the search sources.'));
@@ -103,6 +156,22 @@ export function SearchScreen() {
       await refreshRecords();
     } catch (err) {
       setNotice(errorMessage(err, message));
+    }
+  };
+
+  const reloadPress = async () => {
+    setPress(await apiRequest('GET', `/api/projects/${projectId}/press-status`));
+    await refreshWorkflow();
+  };
+
+  const waivePress = async () => {
+    try {
+      await apiRequest('POST', `/api/projects/${projectId}/press-waiver`, { reason: waiverReason });
+      setWaiverReason('');
+      await reloadPress();
+      setNotice('PRESS peer review waived.');
+    } catch (err) {
+      setNotice(errorMessage(err, 'Could not record the waiver.'));
     }
   };
 
@@ -132,7 +201,24 @@ export function SearchScreen() {
       <div style={{ marginBottom: '32px' }}>
         <h4 style={{ color: 'var(--accent-primary)', marginBottom: '16px' }}>Search strategies</h4>
         {searchItems.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>No search strategies yet. Add them in the protocol.</p>}
-        {searchItems.map(item => <StrategyCard key={item.id} item={item} sources={sources} onSearched={afterChange} />)}
+        {press && (
+          <div style={{ marginBottom: '12px', fontSize: '0.9rem' }}>
+            {press.waived
+              ? <span style={{ color: '#f59e0b' }}>PRESS peer review waived: {press.waiver_reason}</span>
+              : press.met
+                ? <span style={{ color: '#10b981' }}>Every current strategy has an approved PRESS peer review.</span>
+                : (
+                  <details>
+                    <summary style={{ cursor: 'pointer', color: '#f59e0b' }}>Search sign-off needs an approved PRESS review of every strategy, or a waiver</summary>
+                    <textarea aria-label="Reason for waiving PRESS peer review" className="search-input" style={{ width: '100%', minHeight: '50px', marginTop: '6px' }} value={waiverReason} onChange={e => setWaiverReason(e.target.value)} placeholder="For example: no second information specialist is available" />
+                    <button className="btn-glass" onClick={waivePress} disabled={waiverReason.trim().length < 20} style={{ padding: '6px 12px', marginTop: '6px' }}>Waive PRESS peer review</button>
+                  </details>
+                )}
+          </div>
+        )}
+        {searchItems.map(item => (
+          <StrategyCard key={item.id} item={item} sources={sources} quality={quality} press={press?.strategies.find(p => String(p.strategy_id) === item.id)} onSearched={afterChange} onQualityChanged={reloadPress} />
+        ))}
       </div>
 
       <div style={{ background: 'rgba(16, 185, 129, 0.05)', border: '1px dashed rgba(16,185,129,0.4)', padding: '24px', borderRadius: '12px' }}>

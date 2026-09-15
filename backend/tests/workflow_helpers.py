@@ -118,7 +118,7 @@ def design_protocol(client, project_id, headers):
 
 
 def lock_protocol(client, project_id, headers, fake_provider):
-    """Generate and design a protocol, accept every criterion, sign off the protocol, and waive registration."""
+    """Generate, design, and sign off a protocol with every criterion accepted; waive registration and PRESS."""
     generated = generate_protocol(client, project_id, headers, fake_provider)
     for kind in ("inclusion", "exclusion"):
         client.post(url(project_id, "criteria/accept-all"), json={"kind": kind}, headers=headers)
@@ -126,6 +126,8 @@ def lock_protocol(client, project_id, headers, fake_provider):
     complete_stage(client, project_id, headers, "protocol")
     waiver = {"reason": "Teaching exercise; the protocol won't be registered."}
     assert client.post(url(project_id, "registrations/waiver"), json=waiver, headers=headers).status_code == 201
+    press_waiver = {"reason": "Teaching exercise; no second searcher is available."}
+    assert client.post(url(project_id, "press-waiver"), json=press_waiver, headers=headers).status_code == 201
     return generated
 
 

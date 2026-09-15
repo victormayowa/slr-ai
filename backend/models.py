@@ -220,6 +220,8 @@ class SearchStrategy(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     database: Mapped[str] = mapped_column(String(100))
     query: Mapped[str] = mapped_column(Text)
+    # Increases with every change; each version is kept in search_strategy_versions.
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -231,6 +233,7 @@ class SearchRun(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     strategy_id: Mapped[int | None] = mapped_column(ForeignKey("search_strategies.id", ondelete="SET NULL"))
+    strategy_version: Mapped[int | None] = mapped_column(Integer)
     # "database", "register", or "other" (PRISMA 2020 sources), or "import" for uploads with no source recorded
     kind: Mapped[str] = mapped_column(String(10))
     # The database searched, or the imported file's name.
@@ -605,3 +608,62 @@ class DuplicateReview(Base):
     decision: Mapped[str] = mapped_column(String(20))
     reviewer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SearchStrategyVersion(Base):
+    """One version of a search strategy. Changes after the protocol is locked carry a note explaining them."""
+
+    __tablename__ = "search_strategy_versions"
+    __table_args__ = (UniqueConstraint("strategy_id", "version", name="uq_search_strategy_version"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("search_strategies.id", ondelete="CASCADE"))
+    version: Mapped[int] = mapped_column(Integer)
+    database: Mapped[str] = mapped_column(String(100))
+    query: Mapped[str] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    created_by: Mapped[User | None] = relationship()
+
+
+class RecallCheck(Base):
+    """Which known relevant articles (PMIDs or DOIs) a strategy version found."""
+
+    __tablename__ = "recall_checks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    strategy_id: Mapped[int] = mapped_column(ForeignKey("search_strategies.id", ondelete="CASCADE"))
+    strategy_version: Mapped[int] = mapped_column(Integer)
+    connector: Mapped[str] = mapped_column(String(40))
+    seeds: Mapped[list[str]] = mapped_column(JSONB)
+    found: Mapped[list[str]] = mapped_column(JSONB)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    created_by: Mapped[User | None] = relationship()
+
+
+class PressReview(Base):
+    """A PRESS 2015 peer review of one strategy version, or a project-wide waiver (no strategy)."""
+
+    __tablename__ = "press_reviews"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    strategy_id: Mapped[int | None] = mapped_column(ForeignKey("search_strategies.id", ondelete="CASCADE"))
+    strategy_version: Mapped[int | None] = mapped_column(Integer)
+    reviewer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    # "completed" or "waived"
+    status: Mapped[str] = mapped_column(String(12))
+    # {element: {"rating": ..., "comment": ...}} for the six PRESS elements.
+    answers: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    # "approved" or "revisions_required" for completed reviews.
+    overall: Mapped[str | None] = mapped_column(String(20))
+    # The reviewer's summary, or the waiver reason.
+    comment: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    reviewer: Mapped[User | None] = relationship()

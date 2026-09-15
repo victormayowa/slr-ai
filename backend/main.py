@@ -28,6 +28,8 @@ from records_routes import router as records_router
 from registration_routes import router as registration_router
 from review_routes import router as review_router
 from screening_routes import router as screening_router
+from search_quality_routes import router as search_quality_router
+from search_quality_routes import vocabulary_router
 from security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 from services.ai_screening import answer_faq
 from services.errors import LLMError
@@ -87,6 +89,8 @@ app.include_router(protocol_design_router)
 app.include_router(protocol_catalog_router)
 app.include_router(topic_router)
 app.include_router(registration_router)
+app.include_router(search_quality_router)
+app.include_router(vocabulary_router)
 
 
 @app.exception_handler(TaskNotReady)

@@ -31,6 +31,8 @@ def lock_without_waiver(client, project_id, headers, fake_provider):
         client.post(url(project_id, "criteria/accept-all"), json={"kind": kind}, headers=headers)
     design_protocol(client, project_id, headers)
     complete_stage(client, project_id, headers, "protocol")
+    press_waiver = {"reason": "Teaching exercise; no second searcher is available."}
+    assert client.post(url(project_id, "press-waiver"), json=press_waiver, headers=headers).status_code == 201
 
 
 def unmet_search_requirements(client, project_id, headers):

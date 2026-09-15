@@ -16,10 +16,11 @@ from permissions import Permission
 from projects_routes import ProjectAccess, get_in_project, project_access
 from protocol_frameworks import FRAMEWORKS, criterion_element_keys
 from rate_limiting import ai_rate_limit
+from search_quality import record_strategy_version
 from services.ai_protocol import generate_protocol_elements
 from services.ai_screening import ROB_TOOL_DOMAINS
 from services.errors import LLMError
-from workflow import require_stage_open
+from workflow import WorkflowError, require_stage_open
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["protocol"])
 
@@ -54,6 +55,14 @@ class AcceptAllRequest(BaseModel):
 
 class StrategyUpdate(BaseModel):
     query: str = Field(min_length=1, max_length=10_000)
+    # Required once the protocol is locked: why the strategy changed.
+    note: str | None = Field(None, max_length=2000)
+
+
+class StrategyCreate(BaseModel):
+    database: str = Field(min_length=1, max_length=100)
+    query: str = Field(min_length=1, max_length=10_000)
+    note: str | None = Field(None, max_length=2000)
 
 
 class ExtractionFieldsUpdate(BaseModel):
@@ -93,7 +102,23 @@ def _checked_element(project: models.Project, element: str | None) -> str | None
 
 
 def strategy_out(strategy: models.SearchStrategy) -> dict:
-    return {"id": strategy.id, "database": strategy.database, "query": strategy.query}
+    return {"id": strategy.id, "database": strategy.database, "query": strategy.query, "version": strategy.version}
+
+
+def _strategy_change_note(db: Session, project_id: int, note: str | None) -> str | None:
+    """Strategies change freely while the protocol is open. Once it's locked, they change only during search and with
+    a note explaining the change, which is reported as a deviation from the protocol."""
+    try:
+        require_stage_open(db, project_id, "protocol")
+        return (note or "").strip() or None
+    except WorkflowError:
+        require_stage_open(db, project_id, "search")
+    if not note or len(note.strip()) < 10:
+        raise HTTPException(
+            status_code=422,
+            detail="The protocol is locked, so explain why the search strategy changed (at least 10 characters)",
+        )
+    return note.strip()
 
 
 def _project_criteria(db: Session, project_id: int) -> list[models.Criterion]:
@@ -227,8 +252,14 @@ async def generate_protocol(
                     status="pending",
                 )
             )
-    for search in generated.boolean_searches:
-        db.add(models.SearchStrategy(project_id=project.id, database=search.database[:100], query=search.string))
+    new_strategies = [
+        models.SearchStrategy(project_id=project.id, database=search.database[:100], query=search.string)
+        for search in generated.boolean_searches
+    ]
+    db.add_all(new_strategies)
+    db.flush()
+    for strategy in new_strategies:
+        record_strategy_version(db, strategy, access.user.id, "Suggested by AI")
     added_fields = _add_extraction_fields(project, protocol.extraction_outline.splitlines())
     db.flush()
 
@@ -360,21 +391,58 @@ def update_search_strategy(
     access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)),
     db: Session = Depends(get_db),
 ):
-    require_stage_open(db, access.project.id, "protocol")
     strategy = get_in_project(db, models.SearchStrategy, strategy_id, access.project.id, "Search strategy")
-    if strategy.query != body.query:
-        record_event(
-            db,
-            project_id=access.project.id,
-            actor_id=access.user.id,
-            action="search_strategy.updated",
-            entity_type="search_strategy",
-            entity_id=strategy.id,
-            details={"previous_query": strategy.query, "query": body.query},
-        )
-        strategy.query = body.query
+    if strategy.query == body.query:
+        return strategy_out(strategy)
+    note = _strategy_change_note(db, access.project.id, body.note)
+    locked = not _protocol_open(db, access.project.id)
+    record_event(
+        db,
+        project_id=access.project.id,
+        actor_id=access.user.id,
+        action="search_strategy.amended_after_protocol_lock" if locked else "search_strategy.updated",
+        entity_type="search_strategy",
+        entity_id=strategy.id,
+        details={"previous_query": strategy.query, "query": body.query, "version": strategy.version + 1, "note": note},
+    )
+    strategy.query = body.query
+    strategy.version += 1
+    record_strategy_version(db, strategy, access.user.id, note)
     db.commit()
     return strategy_out(strategy)
+
+
+@router.post("/search-strategies", status_code=201)
+def add_search_strategy(
+    body: StrategyCreate,
+    access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)),
+    db: Session = Depends(get_db),
+):
+    """Add a strategy, for example a translation of the PubMed strategy for another database."""
+    note = _strategy_change_note(db, access.project.id, body.note)
+    strategy = models.SearchStrategy(project_id=access.project.id, database=body.database.strip(), query=body.query)
+    db.add(strategy)
+    db.flush()
+    record_strategy_version(db, strategy, access.user.id, note)
+    record_event(
+        db,
+        project_id=access.project.id,
+        actor_id=access.user.id,
+        action="search_strategy.added",
+        entity_type="search_strategy",
+        entity_id=strategy.id,
+        details={"database": strategy.database, "query": strategy.query, "note": note},
+    )
+    db.commit()
+    return strategy_out(strategy)
+
+
+def _protocol_open(db: Session, project_id: int) -> bool:
+    try:
+        require_stage_open(db, project_id, "protocol")
+        return True
+    except WorkflowError:
+        return False
 
 
 @router.get("/extraction-fields")

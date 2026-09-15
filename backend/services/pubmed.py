@@ -163,3 +163,32 @@ def find_pubmed_reviews(query: str, limit: int = 8) -> list[dict]:
             }
         )
     return reviews
+
+
+def pubmed_found_seeds(query: str, pmids: list[str], dois: list[str]) -> set[str]:
+    """Which of these PMIDs and DOIs the query retrieves in PubMed."""
+    clauses = [f"{pmid}[uid]" for pmid in pmids] + [f'"{doi}"[doi]' for doi in dois]
+    if not clauses:
+        return set()
+    try:
+        ids = _esearch(f"({query}) AND ({' OR '.join(clauses)})", retmax=200).get("idlist", [])
+        found = {pmid for pmid in pmids if pmid in ids}
+        if dois and ids:
+            summary = requests.get(
+                f"{EUTILS_BASE}/esummary.fcgi",
+                params=_eutils_params(id=",".join(ids), retmode="json"),
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            summary.raise_for_status()
+            result = summary.json().get("result", {})
+            found_dois = {
+                article_id.get("value", "").lower()
+                for uid in ids
+                for article_id in (result.get(uid) or {}).get("articleids", [])
+                if article_id.get("idtype") == "doi"
+            }
+            found |= {doi for doi in dois if doi in found_dois}
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("PubMed recall check failed", exc_info=True)
+        raise SearchError("PubMed search failed. Please try again shortly.") from exc
+    return found

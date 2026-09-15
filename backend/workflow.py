@@ -22,6 +22,7 @@ from permissions import Permission
 from protocol_design import project_sections, protocol_issues
 from protocol_frameworks import PROTOCOL_SECTIONS, REQUIRED_SECTIONS
 from review_data import TITLE_ABSTRACT, final_decision, has_successful_run, latest_run
+from search_quality import press_status
 
 STAGES = ["protocol", "search", "screening", "extraction", "appraisal", "synthesis"]
 
@@ -172,6 +173,10 @@ def requirements(db: Session, project: models.Project, stage: str) -> list[Requi
             Requirement("Deduplication run on every record", not find_duplicates(records)),
             Requirement("Possible duplicates reviewed", not candidate_pairs(records, reviewed_pairs(db, project.id))),
             Requirement("Protocol registration submitted, or registration waived with a reason", bool(recorded)),
+            Requirement(
+                "PRESS peer review approved for every current search strategy, or PRESS waived with a reason",
+                press_status(db, project.id)["met"],
+            ),
         ]
         latest_version = _latest_version(db, project.id, "protocol")
         if any(r.status != "waived" and r.protocol_version < latest_version for r in recorded):
@@ -247,7 +252,14 @@ def _snapshot_content(db: Session, project: models.Project, stage: str) -> dict[
         runs = db.scalars(
             select(models.SearchRun).where(models.SearchRun.project_id == project.id).order_by(models.SearchRun.id)
         )
+        strategies = db.scalars(
+            select(models.SearchStrategy)
+            .where(models.SearchStrategy.project_id == project.id)
+            .order_by(models.SearchStrategy.id)
+        )
         return {
+            "strategies": [{"database": s.database, "query": s.query, "version": s.version} for s in strategies],
+            "press": press_status(db, project.id),
             "runs": [
                 {
                     "kind": run.kind,

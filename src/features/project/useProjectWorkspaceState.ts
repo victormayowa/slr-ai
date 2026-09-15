@@ -26,7 +26,7 @@ const splitCriteria = (criteria: CriterionInfo[]) => {
 };
 
 const toSearchItems = (strategies: StrategyInfo[]): SearchItem[] =>
-  strategies.map(s => ({ id: String(s.id), database: s.database, string: s.query, status: 'pending' }));
+  strategies.map(s => ({ id: String(s.id), database: s.database, string: s.query, version: s.version, status: 'pending' }));
 
 // All state and actions for one project's workspace. The workspace remounts per project, so state never leaks between projects.
 export function useProjectWorkspaceState(projectId: number) {
@@ -346,13 +346,21 @@ export function useProjectWorkspaceState(projectId: number) {
     }
   };
 
-  const saveSearchString = async (id: string, query: string) => {
-    if (!query.trim()) return;
+  // Returns whether the change was saved. Once the protocol is locked, a change needs a note explaining it.
+  const saveSearchString = async (id: string, query: string, note?: string) => {
+    if (!query.trim()) return false;
     try {
-      await apiRequest('PATCH', projectPath(`search-strategies/${id}`), { query });
+      const saved: StrategyInfo = await apiRequest('PATCH', projectPath(`search-strategies/${id}`), { query, note: note ?? null });
+      setSearchItems(prev => prev.map(item => (item.id === id ? { ...item, string: saved.query, version: saved.version } : item)));
+      return true;
     } catch (err) {
       alert(errorMessage(err, 'Could not save the search string.'));
+      return false;
     }
+  };
+
+  const reloadStrategies = async () => {
+    setSearchItems(toSearchItems(await apiRequest('GET', projectPath('search-strategies'))));
   };
 
   const handleRunDedup = async () => {
@@ -564,6 +572,7 @@ export function useProjectWorkspaceState(projectId: number) {
     protocolCatalog,
     refreshWorkflow: loadWorkflow,
     saveSearchString,
+    reloadStrategies,
     handleRunDedup,
     handleRunAbstractScreening,
     handleUserDecision,
