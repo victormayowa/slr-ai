@@ -14,6 +14,7 @@ import {
   type SuggestionInfo,
 } from '../../api/publishing';
 import { useAuth } from '../../auth/authContext';
+import { CommentThread } from '../../components/CommentThread';
 import { DiffView } from '../../components/DiffView';
 import { AMBER, GREEN, GREY, RED, chip, fieldLabel, muted, panel, row, smallButton } from '../../components/ui';
 import { WorkspaceStageGate } from '../project/WorkspaceStageGate';
@@ -293,6 +294,11 @@ export function ManuscriptScreen() {
                       </button>
                     )}
                   </div>
+                  <CommentThread
+                    projectId={projectId}
+                    anchorKey={`sentence:${section.key}:${check.hash}`}
+                    anchorLabel={`${section.title}: ${check.text.slice(0, 100)}`}
+                  />
                 </div>
               ))}
             </div>

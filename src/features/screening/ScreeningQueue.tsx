@@ -3,6 +3,7 @@ import { errorMessage } from '../../api/client';
 import { jobProblem, jobProgress, waitForJob, type AiJob } from '../../api/jobs';
 import { STATE_LABELS, type ExclusionReason, type QueueResponse, type ScreeningRecord, type ScreeningStage } from '../../api/screening';
 import { useAuth } from '../../auth/authContext';
+import { CommentThread } from '../../components/CommentThread';
 import { ProgressBar } from '../../components/ProgressBar';
 import { AMBER, BLUE, GREEN, RED, chip, fieldLabel, muted, panel, row, smallButton } from '../../components/ui';
 import { useWorkspace } from '../project/workspaceContext';
@@ -166,6 +167,7 @@ export function ScreeningQueue({ stage, reasons, documents = {}, onOpenPassages 
                 {!fullText && <button className="btn-glass" style={smallButton} disabled={busy !== null} onClick={() => decide(record, 'undecided')}>? Undecided</button>}
                 <input aria-label={`Note for ${record.title}`} className="search-input" style={{ maxWidth: '260px' }} placeholder="Note (optional)" value={draft(record.id).note} onChange={e => setDraft(record.id, { note: e.target.value })} />
               </div>
+              <CommentThread projectId={projectId} anchorKey={`record:${record.id}`} anchorLabel={record.title} />
             </article>
           );
         })}

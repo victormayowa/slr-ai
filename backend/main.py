@@ -1,8 +1,10 @@
 import logging
 import os
+from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -61,7 +63,27 @@ configure_logging()
 configure_sentry()
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="OmniReview API")
+API_DESCRIPTION = """\
+The OmniReview API. Everything the web app does goes through these routes.
+
+**Authentication.** Send a bearer token in the `Authorization` header. A personal access token (created under
+Settings, and starting `omr_`) is meant for scripts and other systems: it carries a read or write scope, can be
+limited to particular projects and given an expiry, and can never create tokens or reach the administration routes.
+Signing in through `/api/auth/login` returns a session token for the web app instead.
+
+**Permissions.** Every project route checks the caller's role on that project, so a token can only do what its owner
+can do. Projects the caller doesn't belong to answer 404 rather than 403, so project ids don't reveal which projects
+exist.
+
+**Human decisions.** AI output is stored as suggestions with their provenance; inclusion, extraction values, risk of
+bias judgments, GRADE ratings, and export approvals are always recorded against a person.
+
+**Webhooks.** Projects can subscribe to audit events. Each delivery carries `X-OmniReview-Event`,
+`X-OmniReview-Delivery`, and `X-OmniReview-Signature: sha256=<hex>`, an HMAC-SHA256 of the exact request body using
+the subscription's secret. Verify the signature before trusting a delivery.
+"""
+
+app = FastAPI(title="OmniReview API", description=API_DESCRIPTION)
 
 cors_origins = [
     origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if origin.strip()
@@ -182,6 +204,26 @@ async def api_chat_faq(req: ChatRequest, user: models.User = Depends(get_current
 
 # Included after the routes are declared; FastAPI copies a router's routes at include time.
 app.include_router(api)
+
+
+def custom_openapi() -> dict[str, Any]:
+    """Document the bearer token, which is checked in a dependency rather than declared per route."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes)
+    schema.setdefault("components", {})["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "description": "A personal access token (omr_…) or a session token from /api/auth/login.",
+        }
+    }
+    schema["security"] = [{"BearerAuth": []}]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi  # type: ignore[method-assign]
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { CELL_STATES, type CellInfo, type FieldDef, type Structured, type SuggestionInfo, type ValueInfo } from '../../api/extraction';
+import { CommentThread } from '../../components/CommentThread';
 import { AMBER, GREEN, RED, chip, muted, percent, row, smallButton } from '../../components/ui';
 import { ValueEditor } from './ValueEditor';
 
@@ -11,6 +12,9 @@ type Props = {
   components: string[];
   canExtract: boolean;
   canReconcile: boolean;
+  projectId: number;
+  // Identifies this cell so a discussion can be attached to it, for example "cell:3:7:2".
+  anchorKey: string;
   onSave: (draft: CellDraft) => void;
   onAccept: (suggestion: SuggestionInfo) => void;
   onReconcile: (value: ValueInfo) => void;
@@ -39,7 +43,7 @@ function ValueLine({ value, onEvidence, actions }: { value: ValueInfo; onEvidenc
 
 // One cell of the extraction form (a field for a study, or for one of its arms): the reviewer's value, other extractors'
 // values when visible, the AI suggestion with its evidence, and the final value.
-export function CellCard({ cell, field, components, canExtract, canReconcile, onSave, onAccept, onReconcile, onApprove, onEvidence, onCalculate, onImpute }: Props) {
+export function CellCard({ cell, field, components, canExtract, canReconcile, projectId, anchorKey, onSave, onAccept, onReconcile, onApprove, onEvidence, onCalculate, onImpute }: Props) {
   const [draft, setDraft] = useState<CellDraft>(() => initialDraft(cell, field));
   const state = CELL_STATES[cell.state];
   const label = `${field.name}${cell.arm_label ? ` (${cell.arm_label})` : ''}`;
@@ -120,6 +124,7 @@ export function CellCard({ cell, field, components, canExtract, canReconcile, on
       {cell.my_value && canReconcile && cell.state === 'discrepancy' && (
         <button className="btn-glass" style={{ ...smallButton, marginTop: '4px' }} onClick={() => cell.my_value && onReconcile(cell.my_value)}>Use my value as final</button>
       )}
+      <CommentThread projectId={projectId} anchorKey={anchorKey} anchorLabel={label} />
     </div>
   );
 }

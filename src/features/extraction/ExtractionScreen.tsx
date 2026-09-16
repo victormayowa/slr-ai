@@ -285,6 +285,8 @@ export function ExtractionScreen() {
                           components={components(field)}
                           canExtract={data.can_extract}
                           canReconcile={data.can_reconcile}
+                          projectId={projectId}
+                          anchorKey={`cell:${studyId}:${cell.field_id}:${cell.arm_id ?? 'study'}`}
                           onSave={draft => save(cell, draft)}
                           onAccept={suggestion => accept(cell, suggestion)}
                           onReconcile={value => reconcile(cell, value)}
