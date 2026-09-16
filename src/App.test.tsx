@@ -69,6 +69,7 @@ const WORKSPACE_API = {
     }],
   },
   'GET /api/protocol-frameworks': CATALOG,
+  'GET /api/notifications': { unread: 0, notifications: [] },
 };
 
 // Answers fetch calls from a table keyed by "METHOD /path"; unexpected requests get a 500.
@@ -432,6 +433,84 @@ describe('App routing', () => {
 
     expect(await screen.findByText('Included study retracted: Aspirin trial A')).toBeTruthy();
     expect(screen.getByTitle('2 studies, high certainty')).toBeTruthy();
+  });
+
+  it('shows the team with its tasks and invitations', async () => {
+    const member = { user_id: 1, name: 'Liam Lead', email: 'lead@omnireview.test', role: 'lead_reviewer' };
+    mockApi({
+      'POST /api/auth/login': LOGIN,
+      ...WORKSPACE_API,
+      'GET /api/projects/7/members': [member],
+      'GET /api/projects/7/invitations': [
+        { id: 3, email: 'newcomer@example.org', role: 'screener', status: 'open', invited_by: 'Liam Lead', expires_at: '2026-09-30T00:00:00Z', accepted_at: null, created_at: '2026-09-16T00:00:00Z' },
+      ],
+      'GET /api/projects/7/declarations': [{ user_id: 1, name: 'Liam Lead', role: 'lead_reviewer', has_competing_interests: false, statement: '', funding: '', updated_at: null }],
+      'GET /api/projects/7/tasks': [
+        { id: 9, title: 'Screen the 2026 records', description: '', stage: 'screening', assignee_id: 1, assignee: 'Liam Lead', due_on: '2026-10-01', status: 'open', priority: 'high', anchor_key: '', completed_at: null, created_at: '2026-09-16T00:00:00Z', updated_at: '2026-09-16T00:00:00Z' },
+      ],
+      'GET /api/projects/7/comments': [],
+      'GET /api/projects/7/team/workload': [
+        { user_id: 1, name: 'Liam Lead', role: 'lead_reviewer', title_abstract_decisions: 12, full_text_decisions: 3, extraction_values: 4, appraisals_signed_off: 1, open_tasks: 1, overdue_tasks: 0 },
+      ],
+      'GET /api/projects/7/team/metrics': { reviewers: [], pairwise_agreement: [] },
+    });
+    renderApp('/projects/7/team');
+
+    signIn();
+
+    expect(await screen.findByText('Screen the 2026 records')).toBeTruthy();
+    expect(screen.getByText('newcomer@example.org')).toBeTruthy();
+    // With a single reviewer per record there is no pair to compare, and the screen says so.
+    expect(screen.getByText(/Agreement is reported once two reviewers/)).toBeTruthy();
+  });
+
+  it('will not accept a calibration below target without a reason', async () => {
+    const report = {
+      id: 2, stage: 'title_abstract', ai_model_id: 4, model: 'gemini/gemini-3.8-flash', prompt_version: 'screening-v3',
+      sample_size: 12, seed: 7, status: 'completed', passed: false, error: null, created_at: '2026-09-16T00:00:00Z',
+      accepted_at: null, acceptance_note: '', thresholds: { recall: 0.95 },
+      metrics: { compared: 12, failed: 0, includes: 4, excludes: 8, recall: 0.5, recall_ci: [0.15, 0.85], specificity: 1, agreement: 0.83 },
+    };
+    const fetchMock = mockApi({
+      'POST /api/auth/login': LOGIN,
+      ...WORKSPACE_API,
+      'GET /api/projects/7/calibration': { reports: [report], require_ai_calibration: true, recall_target: 0.95, current_prompt_version: 'screening-v3' },
+      'GET /api/projects/7/bias-report': { records: 12, included: 4, groups: [], ai_errors_by_year: [], mean_ai_confidence: 0.8, note: 'Language is not extracted.' },
+      'GET /api/projects/7/reports/sop': { project: { id: 7, title: 'Aspirin review' }, generated_at: '2026-09-16T00:00:00Z', settings: {}, stages: [{ stage: 'protocol', label: 'Protocol', completed_at: '2026-09-16T00:00:00Z', completed_by: 'Liam Lead', note: null }] },
+      'GET /api/projects/7/reproducibility-checks': [],
+    });
+    renderApp('/projects/7/governance');
+
+    signIn();
+
+    expect(await screen.findByText('below target')).toBeTruthy();
+    // Requiring calibration but having none accepted keeps AI screening switched off, and the screen warns about it.
+    expect(screen.getByText(/AI screening stays switched off/)).toBeTruthy();
+    expect(screen.getByText(/Recall 50%/)).toBeTruthy();
+    // Signing in is itself a POST, so check that nothing was sent to the calibration routes.
+    const calibrationPosts = fetchMock.mock.calls.filter(
+      ([url, init]) => init?.method === 'POST' && String(url).includes('/calibration'),
+    );
+    expect(calibrationPosts).toEqual([]);
+  });
+
+  it('offers the export formats and lists webhooks', async () => {
+    mockApi({
+      'POST /api/auth/login': LOGIN,
+      ...WORKSPACE_API,
+      'GET /api/projects/7/webhooks': [
+        { id: 1, url: 'https://example.org/hook', events: ['stage.*'], active: true, failure_count: 0, last_delivery_at: null, created_at: '2026-09-16T00:00:00Z' },
+      ],
+    });
+    renderApp('/projects/7/interop');
+
+    signIn();
+
+    expect(await screen.findByRole('heading', { name: 'Export & Integrations' })).toBeTruthy();
+    // The webhook list arrives after the first render.
+    expect(await screen.findByText('https://example.org/hook')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Export for Rayyan' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'EBMonFHIR bundle' })).toBeTruthy();
   });
 
   it('explains when a project cannot be opened', async () => {

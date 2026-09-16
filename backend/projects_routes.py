@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import benchmarks
 import models
 from ai_catalog import ai_model_out, model_ref
 from audit import record_event
@@ -209,6 +210,14 @@ def set_project_ai_model(
     model = db.get(models.AIModel, body.ai_model_id)
     if model is None or not model.enabled or model.purpose != "chat":
         raise HTTPException(status_code=404, detail="That AI model isn't available")
+    if benchmarks.validation_required() and model.benchmark_status not in ("passed", "exempt"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{model.label} hasn't passed the benchmark suite, and this server only allows validated models. "
+                "Ask an administrator to benchmark it."
+            ),
+        )
     previous = access.project.ai_model
     if previous is None or previous.id != model.id:
         access.project.ai_model = model

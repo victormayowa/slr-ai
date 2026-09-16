@@ -40,19 +40,36 @@ def test_expired_token_rejected(client):
 
 
 def test_assistant_without_an_api_key_explains_how_to_add_one(client, auth_headers):
-    response = client.post("/api/chat", json={"query": "hi"}, headers=auth_headers)
+    response = client.post("/api/chat", json={"query": "Is there an audit trail?"}, headers=auth_headers)
 
     assert response.status_code == 400
     assert "Settings" in response.json()["detail"]
 
 
-def test_assistant_answers_with_the_default_model(client, auth_headers, fake_provider):
-    calls = fake_provider("OmniReview keeps an audit trail.")
+def test_assistant_answers_from_the_documentation_with_citations(client, auth_headers, fake_provider):
+    reply = '{"answer": "OmniReview keeps a hash-chained audit trail.", "citations": ["collaboration-21"]}'
+    calls = fake_provider(reply)
 
     response = client.post("/api/chat", json={"query": "Is there an audit trail?"}, headers=auth_headers)
 
-    assert response.json() == {"answer": "OmniReview keeps an audit trail."}
+    body = response.json()
+    assert body["answer"] == "OmniReview keeps a hash-chained audit trail."
+    assert body["citations"] and all("page" in citation for citation in body["citations"])
     assert (calls[0]["provider"], calls[0]["model"]) == ("gemini", "gemini-3.8-flash")
+    # The documentation sections are given to the model, so its answer can only come from them.
+    assert "<documentation>" in calls[0]["prompt"]
+
+
+def test_assistant_says_so_when_the_documentation_does_not_cover_the_question(client, auth_headers, fake_provider):
+    calls = fake_provider('{"answer": "unused", "citations": []}')
+
+    response = client.post("/api/chat", json={"query": "zzzqqq"}, headers=auth_headers)
+
+    assert response.status_code == 200
+    assert "documentation doesn't cover that" in response.json()["answer"]
+    assert response.json()["citations"] == []
+    # No documentation matched, so no model call was made.
+    assert calls == []
 
 
 def test_cors_does_not_allow_unknown_origin(client):

@@ -3,6 +3,9 @@ import { useAuth } from './auth/authContext';
 import { RequireAuth } from './auth/RequireAuth';
 import { RiskOfBiasScreen } from './features/appraisal/RiskOfBiasScreen';
 import { CertaintyScreen } from './features/certainty/CertaintyScreen';
+import { TeamScreen } from './features/collaboration/TeamScreen';
+import { GovernanceScreen } from './features/governance/GovernanceScreen';
+import { InteropScreen } from './features/interop/InteropScreen';
 import { LivingScreen } from './features/living/LivingScreen';
 import { ManuscriptScreen } from './features/manuscript/ManuscriptScreen';
 import { PublicationScreen } from './features/publication/PublicationScreen';
@@ -25,7 +28,9 @@ import { OtherSourcesScreen } from './features/search/OtherSourcesScreen';
 import { SearchScreen } from './features/search/SearchScreen';
 import { SynthesisScreen } from './features/synthesis/SynthesisScreen';
 import { TopicScreen } from './features/topic/TopicScreen';
+import { AdminPage } from './pages/AdminPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { InvitationPage } from './pages/InvitationPage';
 import { LoginPage } from './pages/LoginPage';
 import { SettingsPage } from './pages/SettingsPage';
 
@@ -45,6 +50,8 @@ function App() {
       <Route element={<RequireAuth />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/admin" element={<AdminPage />} />
+        <Route path="/invitations/:token" element={<InvitationPage />} />
         <Route path="/projects/:projectId" element={<ProjectRoute />}>
           <Route index element={<Navigate to="setup" replace />} />
           <Route path="setup" element={<SetupScreen />} />
@@ -70,6 +77,9 @@ function App() {
           <Route path="manuscript" element={<ManuscriptScreen />} />
           <Route path="publication" element={<PublicationScreen />} />
           <Route path="living" element={<LivingScreen />} />
+          <Route path="team" element={<TeamScreen />} />
+          <Route path="governance" element={<GovernanceScreen />} />
+          <Route path="interop" element={<InteropScreen />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

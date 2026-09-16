@@ -35,7 +35,7 @@ from projects_routes import ProjectAccess
 from records_routes import with_record_details
 from reporting_checklists import CHECKLISTS, STATUSES
 from review_data import FULL_TEXT, TITLE_ABSTRACT
-from review_settings import review_policy
+from review_settings import load_settings, review_policy
 from services.ai_appraisal import AppraisalOutput, ReportingOutput, suggest_appraisal, suggest_reporting
 from services.ai_screening import (
     CriterionPrompt,
@@ -166,9 +166,23 @@ def _screening_store(stage: str, documents: dict[int, models.Document]) -> Calla
     return store
 
 
+def _require_calibration(db: Session, access: ProjectAccess, stage: str) -> None:
+    """When the project requires it, AI screening only runs once a calibration report has been accepted."""
+    from governance_routes import accepted_calibration
+
+    if not load_settings(db, access.project.id).screening.require_ai_calibration:
+        return
+    if accepted_calibration(db, access.project.id, stage, access.project.ai_model_id) is None:
+        raise TaskNotReady(
+            "This project requires AI calibration before AI screening. Run and accept a calibration report in "
+            "Governance first."
+        )
+
+
 def _prepare_screening(db: Session, access: ProjectAccess, records: list[models.Record]) -> PreparedTask:
     if any(record.duplicate_of_id is not None for record in records):
         raise TaskNotReady("Duplicate records are not screened")
+    _require_calibration(db, access, TITLE_ABSTRACT)
     criteria = _accepted_criteria(db, access.project.id)
     ai = project_ai(db, access)
 
@@ -181,6 +195,7 @@ def _prepare_screening(db: Session, access: ProjectAccess, records: list[models.
 def _prepare_full_text_screening(db: Session, access: ProjectAccess, records: list[models.Record]) -> PreparedTask:
     if any(record.duplicate_of_id is not None for record in records):
         raise TaskNotReady("Duplicate records are not screened")
+    _require_calibration(db, access, FULL_TEXT)
     policy = review_policy(db, access.project.id)
     not_sought = [record.id for record in records if not policy.sought(record)]
     if not_sought:

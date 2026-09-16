@@ -3,6 +3,7 @@ import { Navigate, NavLink, Outlet, useNavigate, useParams } from 'react-router-
 import { USER_TIER } from '../../app/plan';
 import { useAuth } from '../../auth/authContext';
 import { ChatWidget } from '../../components/ChatWidget';
+import { NotificationBell } from '../../components/NotificationBell';
 import { ShareModal } from '../../components/ShareModal';
 import { PROJECT_TABS } from './tabs';
 import { useProjectWorkspaceState } from './useProjectWorkspaceState';
@@ -37,10 +38,11 @@ function ProjectLayout({ projectId }: { projectId: number }) {
               <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', fontWeight: 'bold', boxShadow: '0 4px 12px rgba(59,130,246,0.3)' }}>
                 {name.charAt(0).toUpperCase()}
               </div>
-              <div>
+              <div style={{ flex: 1 }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{name}</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{USER_TIER} Plan</div>
               </div>
+              <NotificationBell />
             </div>
             <button disabled={!workspace.currentProject} style={{ width: '100%', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)', color: 'var(--accent-primary)', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => setSharing(true)} onMouseOver={e => e.currentTarget.style.background = 'rgba(59,130,246,0.2)'} onMouseOut={e => e.currentTarget.style.background = 'rgba(59,130,246,0.1)'}>
               👥 Share / Collaborate

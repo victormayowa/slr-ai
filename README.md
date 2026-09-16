@@ -2,7 +2,7 @@
 
 An AI-assisted platform for systematic reviews and meta-analyses, built around human decisions: the AI suggests, reviewers decide, and every number should trace back to recorded data.
 
-> **Status:** in development, not yet released. The review workflow is built end to end (roadmap W0–W14): protocol, search, screening, full texts, extraction, risk of bias, statistical synthesis in R, GRADE certainty, a manuscript whose every sentence is verified against the evidence, submission packages and repository deposits, peer review responses, and living reviews with surveillance and versioned releases. Governance reports, the public API, billing, and production hardening are not built yet. See [docs/roadmap.md](docs/roadmap.md) for the full build plan.
+> **Status:** in development, not yet released. The review workflow is built end to end (roadmap W0–W17): protocol, search, screening, full texts, extraction, risk of bias, statistical synthesis in R, GRADE certainty, a manuscript whose every sentence is verified against the evidence, submission packages and repository deposits, peer review responses, living reviews with surveillance and versioned releases, team collaboration, AI governance, and the public API. Billing (W18) and production hardening (W19) are not built yet. See [docs/roadmap.md](docs/roadmap.md) for the full build plan.
 
 ## Stack
 
@@ -42,6 +42,13 @@ For local testing, `uv run python -m scripts.seed_dev` (run automatically by `do
 | outsider@omnireview.test | none (owns a separate private project) |
 
 What each role may do is defined in [`backend/permissions.py`](backend/permissions.py).
+
+## Collaboration, governance, and the API
+
+- **Team:** invitations by email (valid 14 days, accepted only by the invited address), ownership transfer, per-member competing-interest declarations, tasks with deadline reminders, comments anchored to records, passages, extraction cells, and manuscript sentences, with @mentions and notifications. The help assistant answers from `docs/` and cites the sections it used.
+- **AI governance:** benchmark data sets and runs decide whether a model may be offered (`REQUIRE_VALIDATED_MODELS=true` enforces it), each project can require its own calibration before AI screening runs, and the bias, SOP, provenance, validation, and reproducibility reports show how the review was actually done. Grant administrator rights with `uv run python -m scripts.make_admin someone@example.org`.
+- **Interoperability:** records export as RIS, BibTeX, EndNote XML, CSV, and JSON; decisions move to and from Rayyan and Covidence; results export as RevMan-style and GRADEpro-style sheets, JATS XML, and an EBMonFHIR bundle.
+- **Public API:** documented at `/docs`, with personal access tokens (`omr_…`, read or write, optionally limited to projects and given an expiry) and webhooks signed with `X-OmniReview-Signature: sha256=…`.
 
 ## Local development without Docker
 

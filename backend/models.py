@@ -1,10 +1,11 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -45,6 +46,9 @@ class User(Base):
     reason_for_joining: Mapped[str | None] = mapped_column(String)
     institution: Mapped[str | None] = mapped_column(String)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    # Platform administrators manage the AI model catalog and benchmarks (scripts/make_admin.py).
+    is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    email_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     organization_memberships: Mapped[list["OrganizationMember"]] = relationship(
@@ -96,6 +100,11 @@ class AIModel(Base):
     # US dollars per million tokens. When unknown, run costs are left blank rather than estimated.
     input_price_per_mtok: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
     output_price_per_mtok: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    # Benchmark validation (benchmarks.py): "unvalidated", "passed", "failed", or "exempt" (set by an administrator).
+    benchmark_status: Mapped[str] = mapped_column(String(20), default="unvalidated", server_default="unvalidated")
+    # Prompt versions (for example "screening-v3") the model passed benchmarks with.
+    validated_prompts: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    status_note: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, server_default=func.now())
 
 
@@ -1959,3 +1968,254 @@ class ReviewRelease(Base):
     sha256: Mapped[str] = mapped_column(String(64))
     released_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# --- Collaboration (W15) ---
+
+
+class Invitation(Base):
+    """An invitation to join a project with a role, accepted by signing in with the invited email address. Only the
+    token's hash is stored."""
+
+    __tablename__ = "invitations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    email: Mapped[str] = mapped_column(String(254))
+    role: Mapped[str] = mapped_column(String(30))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    invited_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    project: Mapped[Project] = relationship()
+    invited_by: Mapped[User | None] = relationship(foreign_keys=[invited_by_id])
+
+
+class Task(Base):
+    """A piece of review work with an assignee and deadline, optionally tied to a workflow stage or an item."""
+
+    __tablename__ = "tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    description: Mapped[str] = mapped_column(Text, default="", server_default="")
+    stage: Mapped[str] = mapped_column(String(30), default="", server_default="")
+    assignee_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    due_on: Mapped[date | None] = mapped_column(Date)
+    # "open", "in_progress", or "done"
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    # "low", "normal", or "high"
+    priority: Mapped[str] = mapped_column(String(10), default="normal")
+    anchor_key: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    due_reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    assignee: Mapped[User | None] = relationship(foreign_keys=[assignee_id])
+
+
+class Comment(Base):
+    """A discussion comment anchored to something in the project (a record, a passage, an extraction cell, a manuscript
+    sentence, a stage, a task, or the project itself). Replies share the thread's anchor."""
+
+    __tablename__ = "comments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    # For example "record:12", "span:40", "cell:3:7:2", "sentence:methods:<hash>", "stage:screening", "project".
+    anchor_key: Mapped[str] = mapped_column(String(200), index=True)
+    anchor_label: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("comments.id", ondelete="CASCADE"))
+    body: Mapped[str] = mapped_column(Text)
+    mentions: Mapped[list[int]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    author_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    resolved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    author: Mapped[User | None] = relationship(foreign_keys=[author_id])
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    # "mention", "reply", "task_assigned", "task_due", "stage", "invitation", or "alert"
+    kind: Mapped[str] = mapped_column(String(30))
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text, default="", server_default="")
+    link: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    emailed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship()
+
+
+class MemberDeclaration(Base):
+    """A project member's declaration of competing interests and funding."""
+
+    __tablename__ = "member_declarations"
+    __table_args__ = (UniqueConstraint("project_id", "user_id", name="uq_member_declaration"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    has_competing_interests: Mapped[bool] = mapped_column(Boolean)
+    statement: Mapped[str] = mapped_column(Text, default="", server_default="")
+    funding: Mapped[str] = mapped_column(Text, default="", server_default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+# --- AI governance (W16) ---
+
+
+class BenchmarkRun(Base):
+    """A run of a model (or of the statistics engine) against a benchmark data set, with metrics and pass or fail
+    against the thresholds in force."""
+
+    __tablename__ = "benchmark_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # "screening", "extraction", "appraisal", or "statistics"
+    task: Mapped[str] = mapped_column(String(20))
+    dataset_key: Mapped[str] = mapped_column(String(100))
+    dataset_name: Mapped[str] = mapped_column(String(300))
+    dataset_sha256: Mapped[str] = mapped_column(String(64))
+    ai_model_id: Mapped[int | None] = mapped_column(ForeignKey("ai_models.id", ondelete="SET NULL"))
+    model: Mapped[str] = mapped_column(String(150), default="", server_default="")
+    prompt_version: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    # "queued", "running", "completed", or "failed"
+    status: Mapped[str] = mapped_column(String(20))
+    items: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    processed: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    thresholds: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    passed: Mapped[bool | None] = mapped_column(Boolean)
+    details: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    error: Mapped[str | None] = mapped_column(Text)
+    started_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CalibrationReport(Base):
+    """A project's pre-trust check: the AI screens records reviewers have already decided, and its sensitivity and
+    specificity are compared with the project's thresholds before AI suggestions are relied on."""
+
+    __tablename__ = "calibration_reports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    ai_model_id: Mapped[int | None] = mapped_column(ForeignKey("ai_models.id", ondelete="SET NULL"))
+    model: Mapped[str] = mapped_column(String(150))
+    prompt_version: Mapped[str] = mapped_column(String(60))
+    sample_size: Mapped[int] = mapped_column(Integer)
+    seed: Mapped[int] = mapped_column(Integer)
+    # "running", "completed", or "failed"
+    status: Mapped[str] = mapped_column(String(20))
+    # [{"record_id", "human", "ai", "confidence", "error"}]
+    items: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    thresholds: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    passed: Mapped[bool | None] = mapped_column(Boolean)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    accepted_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    acceptance_note: Mapped[str] = mapped_column(Text, default="", server_default="")
+
+
+class ReproducibilityCheck(Base):
+    """An archived analysis run rerun from its stored script and data, with the results compared."""
+
+    __tablename__ = "reproducibility_checks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("analysis_runs.id", ondelete="CASCADE"))
+    # "identical", "within_tolerance", "different", or "failed"
+    status: Mapped[str] = mapped_column(String(20))
+    max_abs_difference: Mapped[float | None] = mapped_column(Float)
+    differences: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    r_version: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# --- Public API (W17) ---
+
+
+class ApiToken(Base):
+    """A personal access token for the public API. Only its hash is stored; the token is shown once."""
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    prefix: Mapped[str] = mapped_column(String(16))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    # "read" and/or "write"
+    scopes: Mapped[list[str]] = mapped_column(JSONB)
+    # Empty means every project the user belongs to.
+    project_ids: Mapped[list[int]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship()
+
+
+class WebhookSubscription(Base):
+    """A URL notified when audit events matching its patterns happen in a project (for example stage.completed)."""
+
+    __tablename__ = "webhook_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    url: Mapped[str] = mapped_column(String(1000))
+    # The HMAC signing secret, encrypted (crypto.py).
+    secret_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    events: Mapped[list[str]] = mapped_column(JSONB)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_delivery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class WebhookDelivery(Base):
+    __tablename__ = "webhook_deliveries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subscription_id: Mapped[int] = mapped_column(ForeignKey("webhook_subscriptions.id", ondelete="CASCADE"), index=True)
+    audit_event_id: Mapped[int] = mapped_column(ForeignKey("audit_events.id", ondelete="CASCADE"))
+    action: Mapped[str] = mapped_column(String(60))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    # "pending", "delivered", or "failed"
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    response_status: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    subscription: Mapped[WebhookSubscription] = relationship()

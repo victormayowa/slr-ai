@@ -44,4 +44,7 @@ def ai_model_out(model: models.AIModel) -> dict:
         "is_default": model.is_default,
         "enabled": model.enabled,
         "data_location": spec.headquarters if spec else None,
+        # Benchmark validation (benchmarks.py); "exempt" models are offered without benchmarks, with a note.
+        "benchmark_status": model.benchmark_status,
+        "status_note": model.status_note,
     }

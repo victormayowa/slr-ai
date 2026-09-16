@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+import help_center
 import models
 from ai_access import resolve_ai
 from ai_catalog import default_model
@@ -19,10 +20,16 @@ from audit_routes import router as audit_router
 from auth_routes import get_current_user
 from auth_routes import router as auth_router
 from certainty_routes import router as certainty_router
+from collaboration_routes import help_router, invitations_router, notifications_router
+from collaboration_routes import me_router as collaboration_me_router
+from collaboration_routes import router as collaboration_router
 from database import engine, get_db
 from documents_routes import router as documents_router
 from entities_routes import router as entities_router
 from extraction_routes import router as extraction_router
+from governance_routes import admin_router
+from governance_routes import router as governance_router
+from interop_routes import router as interop_router
 from jobs_routes import router as jobs_router
 from living_routes import router as living_router
 from manuscript_routes import router as manuscript_router
@@ -40,11 +47,13 @@ from screening_routes import router as screening_router
 from search_quality_routes import router as search_quality_router
 from search_quality_routes import vocabulary_router
 from security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
-from services.ai_screening import answer_faq
+from services.ai_help import answer_help
 from services.errors import LLMError
 from studies_routes import router as studies_router
 from synthesis_routes import router as synthesis_router
+from tokens_routes import router as tokens_router
 from topic_routes import router as topic_router
+from webhook_routes import router as webhook_router
 from workflow import WorkflowError
 from workflow_routes import router as workflow_router
 
@@ -113,6 +122,16 @@ app.include_router(certainty_router)
 app.include_router(manuscript_router)
 app.include_router(publication_router)
 app.include_router(living_router)
+app.include_router(collaboration_router)
+app.include_router(invitations_router)
+app.include_router(notifications_router)
+app.include_router(collaboration_me_router)
+app.include_router(help_router)
+app.include_router(governance_router)
+app.include_router(admin_router)
+app.include_router(interop_router)
+app.include_router(webhook_router)
+app.include_router(tokens_router)
 
 
 @app.exception_handler(TaskNotReady)
@@ -135,16 +154,30 @@ class ChatRequest(BaseModel):
 
 @api.post("/chat")
 async def api_chat_faq(req: ChatRequest, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """The support assistant uses the catalog's default model, with the caller's own key when they've saved one."""
+    """The support assistant answers from the product documentation and cites the sections it used.
+
+    It uses the catalog's default model, with the caller's own key when they've saved one.
+    """
+    sections = help_center.search(req.query)
+    if not sections:
+        return {
+            "answer": (
+                "The documentation doesn't cover that. Try asking about screening, extraction, meta-analysis, "
+                "certainty of evidence, the manuscript, or collaboration."
+            ),
+            "citations": [],
+        }
     model = default_model(db)
     if model is None:
         raise HTTPException(status_code=503, detail="The assistant is unavailable because no default AI model is set")
     ai = resolve_ai(db, model, user)
     try:
-        result = await answer_faq(ai, req.query)
+        result = await answer_help(ai, req.query, sections)
     except LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"answer": result.value}
+    cited = {section_id for section_id in result.value.citations}
+    used = [section for section in sections if section.id in cited] or sections[:1]
+    return {"answer": result.value.answer, "citations": [help_center.section_out(section) for section in used]}
 
 
 # Included after the routes are declared; FastAPI copies a router's routes at include time.

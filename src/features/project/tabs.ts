@@ -23,6 +23,9 @@ export const PROJECT_TABS = [
   { path: 'manuscript', label: '21. Manuscript' },
   { path: 'publication', label: '22. Submission & Publication' },
   { path: 'living', label: '23. Living Review' },
+  { path: 'team', label: '24. Team & Tasks' },
+  { path: 'governance', label: '25. AI Governance' },
+  { path: 'interop', label: '26. Export & Integrations' },
 ] as const;
 
 export type ProjectTab = (typeof PROJECT_TABS)[number]['path'];

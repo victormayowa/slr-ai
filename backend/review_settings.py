@@ -27,6 +27,8 @@ class ScreeningSettings(BaseModel):
     stopping_alpha: float = Field(0.05, gt=0, lt=0.5)
     # Retrain the prioritization model after this many new decisions.
     retrain_every: int = Field(10, ge=1, le=1000)
+    # Require an accepted calibration report (governance_routes.py) before AI screening suggestions can be run.
+    require_ai_calibration: bool = False
     custom_exclusion_reasons: list[ExclusionReason] = Field(default_factory=list, max_length=30)
 
 

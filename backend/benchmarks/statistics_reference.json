@@ -1,0 +1,56 @@
+{
+  "key": "statistics-reference",
+  "name": "R engine reference values",
+  "task": "statistics",
+  "description": "Pairwise random-effects meta-analysis, meta-regression, and the DerSimonian-Laird estimator on the BCG vaccine trials, compared with the values published for metafor.",
+  "source": "Colditz GA, et al. JAMA 1994;271:698-702 (data). Viechtbauer W. Conducting meta-analyses in R with the metafor package. J Stat Softw 2010;36(3):1-48 (reference values).",
+  "license": "Published data",
+  "cases": [
+    {
+      "name": "BCG vaccine: log risk ratio, REML random effects with meta-regression on latitude",
+      "analysis_type": "pairwise",
+      "spec": {
+        "measure": "RR",
+        "data_type": "binary",
+        "ratio": true,
+        "model": "random",
+        "tau_method": "REML",
+        "hksj": false,
+        "prediction_interval": true,
+        "level": 95,
+        "zero_correction": 0.5,
+        "subgroup": null,
+        "moderators": [{"column": "mod_1", "label": "Absolute latitude", "type": "numeric"}],
+        "sensitivity": {"alternative_estimators": ["DL"]},
+        "publication_bias": {},
+        "plot_formats": ["svg"],
+        "seed": 1
+      },
+      "rows": [
+        {"study_id": 1, "study": "Aronson 1948", "ai": 4, "n1i": 123, "ci": 11, "n2i": 139, "mod_1": 44},
+        {"study_id": 2, "study": "Ferguson & Simes 1949", "ai": 6, "n1i": 306, "ci": 29, "n2i": 303, "mod_1": 55},
+        {"study_id": 3, "study": "Rosenthal 1960", "ai": 3, "n1i": 231, "ci": 11, "n2i": 220, "mod_1": 42},
+        {"study_id": 4, "study": "Hart & Sutherland 1977", "ai": 62, "n1i": 13598, "ci": 248, "n2i": 12867, "mod_1": 52},
+        {"study_id": 5, "study": "Frimodt-Moller 1973", "ai": 33, "n1i": 5069, "ci": 47, "n2i": 5808, "mod_1": 13},
+        {"study_id": 6, "study": "Stein & Aronson 1953", "ai": 180, "n1i": 1541, "ci": 372, "n2i": 1451, "mod_1": 44},
+        {"study_id": 7, "study": "Vandiviere 1973", "ai": 8, "n1i": 2545, "ci": 10, "n2i": 629, "mod_1": 19},
+        {"study_id": 8, "study": "TPT Madras 1980", "ai": 505, "n1i": 88391, "ci": 499, "n2i": 88391, "mod_1": 13},
+        {"study_id": 9, "study": "Coetzee & Berjak 1968", "ai": 29, "n1i": 7499, "ci": 45, "n2i": 7277, "mod_1": 27},
+        {"study_id": 10, "study": "Rosenthal 1961", "ai": 17, "n1i": 1716, "ci": 65, "n2i": 1665, "mod_1": 42},
+        {"study_id": 11, "study": "Comstock 1974", "ai": 186, "n1i": 50634, "ci": 141, "n2i": 27338, "mod_1": 18},
+        {"study_id": 12, "study": "Comstock & Webster 1969", "ai": 5, "n1i": 2498, "ci": 3, "n2i": 2341, "mod_1": 33},
+        {"study_id": 13, "study": "Comstock 1976", "ai": 27, "n1i": 16913, "ci": 29, "n2i": 17854, "mod_1": 33}
+      ],
+      "expected": [
+        {"path": "summary.k", "value": 13, "tolerance": 0},
+        {"path": "summary.estimate", "value": -0.7145, "tolerance": 0.0005},
+        {"path": "summary.se", "value": 0.1798, "tolerance": 0.0005},
+        {"path": "summary.tau2", "value": 0.3132, "tolerance": 0.001},
+        {"path": "summary.I2", "value": 92.22, "tolerance": 0.05},
+        {"path": "meta_regression.coefficients.1.estimate", "value": -0.0291, "tolerance": 0.0005},
+        {"path": "meta_regression.coefficients.1.se", "value": 0.0072, "tolerance": 0.0005},
+        {"path": "sensitivity.alternative_estimators.0.tau2", "value": 0.3088, "tolerance": 0.001}
+      ]
+    }
+  ]
+}

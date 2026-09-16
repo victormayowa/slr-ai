@@ -1,10 +1,11 @@
+import hashlib
 import os
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
 import jwt
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import or_, select
@@ -31,6 +32,11 @@ BCRYPT_ROUNDS = int(os.getenv("BCRYPT_ROUNDS", "12"))
 LOGIN_RATE_LIMIT_PER_MINUTE = 20
 REGISTER_RATE_LIMIT_PER_HOUR = 20
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+# Personal access tokens for the public API start with this; anything else in an Authorization header is a login token.
+TOKEN_PREFIX = "omr_"
+# Tokens can't manage tokens or reach the platform admin routes, so a leaked token can't widen its own access.
+TOKEN_FORBIDDEN_PATHS = ("/api/me/tokens", "/api/admin")
+READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 # Checked when no account matches, so a failed login takes as long whether or not the account exists.
 _DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"not-a-real-password", bcrypt.gensalt(BCRYPT_ROUNDS))
@@ -69,7 +75,40 @@ def create_access_token(data: dict):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
+def hash_api_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _user_from_api_token(request: Request, raw_token: str, db: Session) -> models.User:
+    """Authenticate a public-API token, checking its scopes and the projects it's limited to."""
+    invalid = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="That API token isn't valid",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    token = db.scalar(select(models.ApiToken).where(models.ApiToken.token_hash == hash_api_token(raw_token)))
+    if token is None or token.revoked_at is not None:
+        raise invalid
+    if token.expires_at is not None and token.expires_at <= models.utcnow():
+        raise HTTPException(status_code=401, detail="That API token has expired")
+    if not token.user.is_active:
+        raise invalid
+    path = request.url.path
+    if any(path.startswith(blocked) for blocked in TOKEN_FORBIDDEN_PATHS):
+        raise HTTPException(status_code=403, detail="API tokens can't be used on this route; sign in instead")
+    needed = "read" if request.method in READ_METHODS else "write"
+    if needed not in token.scopes:
+        raise HTTPException(status_code=403, detail=f"This token doesn't have the {needed} scope")
+    project_id = request.path_params.get("project_id")
+    if token.project_ids and project_id is not None and int(project_id) not in token.project_ids:
+        raise HTTPException(status_code=403, detail="This token isn't allowed to use that project")
+    token.last_used_at = models.utcnow()
+    db.commit()
+    return token.user
+
+
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> models.User:
@@ -80,6 +119,8 @@ def get_current_user(
     )
     if credentials is None:
         raise unauthorized
+    if credentials.credentials.startswith(TOKEN_PREFIX):
+        return _user_from_api_token(request, credentials.credentials, db)
     try:
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.PyJWTError:
@@ -87,6 +128,13 @@ def get_current_user(
     user = db.scalar(select(models.User).where(models.User.email == payload.get("sub")))
     if user is None or not user.is_active:
         raise unauthorized
+    return user
+
+
+def require_admin(user: models.User = Depends(get_current_user)) -> models.User:
+    """Platform administrators manage the model catalog and benchmarks. Grant with scripts/make_admin.py."""
+    if not user.is_platform_admin:
+        raise HTTPException(status_code=403, detail="This is only available to platform administrators")
     return user
 
 

@@ -190,16 +190,24 @@ missing. Format the whole response in Markdown.""",
 
 FAQ_PROMPT = PromptTemplate(
     "faq",
-    2,
+    3,
     """You are the support assistant for OmniReview, a platform for systematic reviews.
-Answer the user's question clearly and concisely. If you aren't sure how OmniReview handles something, say so.
+Answer the user's question using only the documentation sections below. Each section starts with its id in square
+brackets. Cite the id of every section you used in "citations". If the sections don't answer the question, say that
+the documentation doesn't cover it and suggest the closest topic that is covered. Never invent features, menu names,
+settings, or prices.
 $untrusted_text_note
+
+<documentation>
+$sections
+</documentation>
 
 <question>
 $query
 </question>
 
-Reply in plain text or simple Markdown.""",
+Return JSON with "answer" (plain text or simple Markdown, at most 250 words) and "citations" (the section ids you
+used).""",
 )
 
 QUESTION_PROMPT = PromptTemplate(

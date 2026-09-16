@@ -2,6 +2,17 @@ site_name: OmniReview AI Documentation
 theme: readthedocs
 nav:
   - Home: index.md
-  - Getting Started: getting-started.md
-  - AI Screening: screening.md
-  - Meta-Analysis: meta-analysis.md
+  - Getting started: getting-started.md
+  - The review workflow: workflow.md
+  - Protocol and search: protocol-and-search.md
+  - Screening: screening.md
+  - Extraction and appraisal: extraction-and-appraisal.md
+  - Meta-analysis: meta-analysis.md
+  - Certainty of evidence: certainty.md
+  - Manuscript: manuscript.md
+  - Publication and deposit: publication.md
+  - Living reviews: living-reviews.md
+  - Collaboration: collaboration.md
+  - AI governance: ai-governance.md
+  - Import and export: import-export.md
+  - API and webhooks: api.md

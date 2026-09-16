@@ -67,6 +67,10 @@ def record_event(
     event.hash = _event_hash(event)
     db.add(event)
     db.flush()
+    # Queued in the same transaction as the change, so a webhook is never sent for a change that was rolled back.
+    import webhooks
+
+    webhooks.queue_deliveries(db, event)
     return event
 
 

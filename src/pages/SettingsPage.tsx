@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { USER_TIER } from '../app/plan';
 import { useAuth } from '../auth/authContext';
 import { ApiKeysPanel } from '../features/settings/ApiKeysPanel';
+import { TokensPanel } from '../features/settings/TokensPanel';
 
 export function SettingsPage() {
   const { userName } = useAuth();
@@ -32,6 +33,8 @@ export function SettingsPage() {
         </p>
 
         <ApiKeysPanel />
+
+        <TokensPanel />
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '40px' }}>
           <button className="btn-primary" style={{ padding: '12px 32px', borderRadius: '8px' }} onClick={() => navigate('/')}>Done</button>

@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { errorMessage } from '../api/client';
 import { useAuth } from '../auth/authContext';
 
-type ChatMessage = { role: 'user' | 'ai'; text: string };
+import type { HelpSectionInfo } from '../api/collaboration';
+
+type ChatMessage = { role: 'user' | 'ai'; text: string; citations?: HelpSectionInfo[] };
 
 export function ChatWidget() {
   const { apiRequest } = useAuth();
@@ -22,7 +24,7 @@ export function ChatWidget() {
 
     try {
       const data = await apiRequest('POST', '/api/chat', { query });
-      setChatMessages(prev => [...prev, { role: 'ai', text: data.answer }]);
+      setChatMessages(prev => [...prev, { role: 'ai', text: data.answer, citations: data.citations ?? [] }]);
     } catch (err) {
       setChatMessages(prev => [...prev, { role: 'ai', text: errorMessage(err, 'Error connecting to FAQ service.') }]);
     }
@@ -34,14 +36,25 @@ export function ChatWidget() {
       {chatOpen ? (
         <div className="glass-panel" style={{ width: '350px', height: '450px', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden', border: '1px solid var(--accent-primary)', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
           <div style={{ padding: '16px', background: 'var(--accent-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h4 style={{ margin: 0 }}>OmniReview FAQ Bot</h4>
+            <h4 style={{ margin: 0 }}>OmniReview Help</h4>
             <button onClick={() => setChatOpen(false)} aria-label="Close chat" style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '1.2rem' }}>×</button>
           </div>
           <div style={{ flex: 1, padding: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ alignSelf: 'flex-start', background: 'rgba(255,255,255,0.1)', padding: '10px 14px', borderRadius: '12px' }}>Hi! How can I help you use OmniReview AI today?</div>
+            <div style={{ alignSelf: 'flex-start', background: 'rgba(255,255,255,0.1)', padding: '10px 14px', borderRadius: '12px' }}>Hi! Ask me anything about using OmniReview. I answer from the documentation and show you where each answer came from.</div>
             {chatMessages.map((msg, idx) => (
               <div key={idx} style={{ alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start', background: msg.role === 'user' ? 'var(--accent-primary)' : 'rgba(255,255,255,0.1)', padding: '10px 14px', borderRadius: '12px', maxWidth: '85%', fontSize: '0.9rem' }}>
                 {msg.text}
+                {msg.citations && msg.citations.length > 0 && (
+                  <div style={{ marginTop: '8px', paddingTop: '6px', borderTop: '1px solid rgba(255,255,255,0.15)', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                    From the documentation:{' '}
+                    {msg.citations.map((citation, position) => (
+                      <span key={citation.id}>
+                        {position > 0 && ', '}
+                        {citation.title} → {citation.heading}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
             {chatLoading && <div style={{ alignSelf: 'flex-start', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>AI is typing...</div>}
