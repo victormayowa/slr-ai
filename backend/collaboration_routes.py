@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+import emailer
+import entitlements
 import help_center
 import models
 import notifications
@@ -118,6 +120,7 @@ def create_invitation(
     )
     if existing is not None:
         raise HTTPException(status_code=409, detail="That person is already a member of this project")
+    entitlements.require_members(db, access.project)
     open_count = db.scalar(
         select(func.count())
         .select_from(models.Invitation)
@@ -154,8 +157,20 @@ def create_invitation(
             link=link,
         )
     db.commit()
-    # The link is returned once so the inviter can send it; only its hash is stored.
-    return {**invitation_out(invitation), "link": notifications.app_url(link)}
+    role = body.role.replace("_", " ")
+    try:
+        emailer.send(
+            email,
+            f"{access.user.full_name} invited you to a review on OmniReview",
+            f'{access.user.full_name} invited you to join "{access.project.title}" as {role}.\n\n'
+            f"Open this link within {INVITATION_DAYS} days to accept. If you don't have an OmniReview account yet, "
+            f"create one with this email address first:\n\n{notifications.app_url(link)}",
+        )
+        emailed = emailer.delivers()
+    except emailer.EmailError:
+        emailed = False
+    # The link is also returned once, so the inviter can send it another way; only its hash is stored.
+    return {**invitation_out(invitation), "link": notifications.app_url(link), "emailed": emailed}
 
 
 @router.delete("/invitations/{invitation_id}", status_code=204)
@@ -202,6 +217,7 @@ def accept_invitation(body: AcceptIn, user: models.User = Depends(get_current_us
         )
     )
     if membership is None:
+        entitlements.require_members(db, invitation.project)
         membership = models.ProjectMember(project_id=invitation.project_id, user_id=user.id, role=invitation.role)
         db.add(membership)
     invitation.accepted_at, invitation.accepted_by_id = models.utcnow(), user.id

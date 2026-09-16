@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, Up
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+import entitlements
 import fhir
 import interop
 import models
@@ -128,6 +129,7 @@ async def import_structured_records(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if len(parsed) > MAX_IMPORT_RECORDS:
         raise HTTPException(status_code=400, detail=f"{file_name} has more than {MAX_IMPORT_RECORDS} records")
+    entitlements.require(db, entitlements.account_for_project(access.project), "records_per_month", len(parsed))
     run = models.SearchRun(
         project_id=access.project.id,
         kind="import",

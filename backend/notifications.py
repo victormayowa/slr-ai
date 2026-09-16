@@ -1,20 +1,19 @@
 """In-app notifications, @mentions, and email delivery.
 
-Email is sent by the worker (deliver_pending_emails) when SMTP is configured; otherwise notifications stay in the app.
-SMTP credentials come from the environment and are never logged.
+Email is sent by the worker (deliver_pending_emails) through emailer.py; when email is disabled, notifications stay
+in the app.
 """
 
 import logging
 import os
 import re
-import smtplib
 from collections.abc import Iterable
 from datetime import timedelta
-from email.message import EmailMessage
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import emailer
 import models
 
 logger = logging.getLogger(__name__)
@@ -68,23 +67,12 @@ def notify_members(
 
 
 def smtp_configured() -> bool:
-    return bool(os.getenv("SMTP_HOST", "").strip() and os.getenv("SMTP_FROM", "").strip())
+    """Whether notification emails are delivered anywhere (SMTP, or the development console)."""
+    return emailer.delivers()
 
 
 def send_email(to: str, subject: str, text: str) -> None:
-    message = EmailMessage()
-    message["From"] = os.environ["SMTP_FROM"]
-    message["To"] = to
-    message["Subject"] = subject
-    message.set_content(text)
-    host = os.environ["SMTP_HOST"]
-    port = int(os.getenv("SMTP_PORT", "587"))
-    with smtplib.SMTP(host, port, timeout=30) as server:
-        if os.getenv("SMTP_STARTTLS", "true").lower() != "false":
-            server.starttls()
-        if os.getenv("SMTP_USERNAME"):
-            server.login(os.environ["SMTP_USERNAME"], os.getenv("SMTP_PASSWORD", ""))
-        server.send_message(message)
+    emailer.send(to, subject, text)
 
 
 def deliver_pending_emails(db: Session, limit: int = 200) -> int:
@@ -110,7 +98,7 @@ def deliver_pending_emails(db: Session, limit: int = 200) -> int:
         body = f"{notification.body}\n\n{app_url(notification.link)}" if notification.link else notification.body
         try:
             send_email(notification.user.email, f"OmniReview: {notification.title}", body.strip())
-        except (OSError, smtplib.SMTPException):
+        except emailer.EmailError:
             logger.warning("Emailing notification %s failed", notification.id)
             continue
         notification.emailed_at = models.utcnow()

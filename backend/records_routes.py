@@ -10,6 +10,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.sql import Select
 
+import entitlements
 import models
 from audit import record_event
 from database import get_db
@@ -247,6 +248,7 @@ async def run_search(
     except SearchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    entitlements.require(db, entitlements.account_for_project(access.project), "records_per_month", len(results))
     source_label = (
         connector.label
         if matching is not None and matching.key == connector.key
@@ -298,6 +300,7 @@ def import_records(
     db: Session = Depends(get_db),
 ):
     require_stage_open(db, access.project.id, "search")
+    entitlements.require(db, entitlements.account_for_project(access.project), "records_per_month", len(body.records))
     run = models.SearchRun(
         project_id=access.project.id,
         kind="import",
@@ -347,6 +350,7 @@ async def import_file(
         raise HTTPException(
             status_code=400, detail=f"{file_name} has more than {MAX_IMPORT_RECORDS} records; split the export"
         )
+    entitlements.require(db, entitlements.account_for_project(access.project), "records_per_month", len(parsed.records))
 
     run = models.SearchRun(
         project_id=access.project.id,

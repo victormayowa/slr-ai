@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import crypto
+import entitlements
 import models
 import webhooks
 from audit import record_event
@@ -91,6 +92,7 @@ def create_webhook(
     db: Session = Depends(get_db),
 ):
     """Create a subscription. The secret is returned once; store it to verify X-OmniReview-Signature."""
+    entitlements.require_feature(db, entitlements.account_for_project(access.project), "webhooks")
     existing = db.scalars(
         select(models.WebhookSubscription).where(models.WebhookSubscription.project_id == access.project.id)
     ).all()

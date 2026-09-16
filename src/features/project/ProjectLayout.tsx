@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Navigate, NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
-import { USER_TIER } from '../../app/plan';
 import { useAuth } from '../../auth/authContext';
 import { ChatWidget } from '../../components/ChatWidget';
+import { LegalLinks } from '../../components/LegalLinks';
 import { NotificationBell } from '../../components/NotificationBell';
 import { ShareModal } from '../../components/ShareModal';
 import { PROJECT_TABS } from './tabs';
@@ -40,7 +40,6 @@ function ProjectLayout({ projectId }: { projectId: number }) {
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{name}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{USER_TIER} Plan</div>
               </div>
               <NotificationBell />
             </div>
@@ -84,11 +83,8 @@ function ProjectLayout({ projectId }: { projectId: number }) {
             <div style={{ marginBottom: '16px' }}>
               <span style={{ fontWeight: 'bold', color: 'var(--text-primary)' }}>OmniReview AI Research Platform</span>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '24px', marginBottom: '16px' }}>
-              <a href="#" style={{ color: 'var(--text-secondary)', textDecoration: 'none' }}>Terms of Service</a>
-              <a href="#" style={{ color: 'var(--text-secondary)', textDecoration: 'none' }}>Privacy Policy</a>
-              <a href="#" style={{ color: 'var(--text-secondary)', textDecoration: 'none' }}>Documentation</a>
-              <a href="mailto:support@omnireview.ai" style={{ color: 'var(--accent-primary)', textDecoration: 'none' }}>Contact Support</a>
+            <div style={{ marginBottom: '16px' }}>
+              <LegalLinks />
             </div>
             <p style={{ margin: 0 }}>&copy; {new Date().getFullYear()} OmniReview AI. All rights reserved.</p>
           </footer>

@@ -46,6 +46,11 @@ jobs:
         run: uv run mypy .
       - name: Test (against PostgreSQL)
         run: uv run pytest
+      - name: Migrations match the models
+        env:
+          DATABASE_URL: postgresql+psycopg://omnireview:omnireview@localhost:5432/omnireview_test
+          JWT_SECRET_KEY: ci-only-secret-key-with-plenty-of-length-0123456789
+        run: uv run alembic upgrade head && uv run alembic check
       - name: Audit dependencies
         run: |
           uv export --frozen --no-dev --no-hashes --format requirements-txt > "$RUNNER_TEMP/requirements.txt"
@@ -71,9 +76,16 @@ jobs:
       - name: Audit dependencies
         run: npm audit --omit=dev --audit-level=high
 
+  ops:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check operations scripts
+        run: shellcheck -S warning ops/*.sh backend/scripts/*.sh
+
   docker:
     runs-on: ubuntu-latest
-    needs: [backend, frontend]
+    needs: [backend, frontend, ops]
     steps:
       - uses: actions/checkout@v4
       - name: Validate compose files
@@ -81,7 +93,7 @@ jobs:
           docker compose -f docker-compose.yml config --quiet
           touch backend/.env
           SITE_ADDRESS=example.com POSTGRES_PASSWORD=ci docker compose -f docker-compose.prod.yml config --quiet
-      - name: Build API image
-        run: docker build -t omnireview-api ./backend
+      - name: Build API image (without the analysis tools, to keep CI fast)
+        run: docker build --build-arg WITH_ANALYSIS_TOOLS=false -t omnireview-api ./backend
       - name: Build web image
         run: docker build -f docker/web.Dockerfile -t omnireview-web .

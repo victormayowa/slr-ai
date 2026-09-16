@@ -1,13 +1,30 @@
-import { useNavigate } from 'react-router-dom';
-import { USER_TIER } from '../app/plan';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import type { BillingAccountSummary } from '../api/account';
 import { useAuth } from '../auth/authContext';
+import { LegalLinks } from '../components/LegalLinks';
 import { ApiKeysPanel } from '../features/settings/ApiKeysPanel';
+import { PrivacyPanel } from '../features/settings/PrivacyPanel';
+import { SecurityPanel } from '../features/settings/SecurityPanel';
 import { TokensPanel } from '../features/settings/TokensPanel';
 
 export function SettingsPage() {
-  const { userName } = useAuth();
+  const { apiRequest, userName } = useAuth();
   const navigate = useNavigate();
+  const [plan, setPlan] = useState<string | null>(null);
   const name = userName ?? '';
+
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest('GET', '/api/billing/accounts')
+      .then((accounts: BillingAccountSummary[]) => {
+        if (!cancelled) setPlan(accounts.find(account => account.kind === 'user')?.plan ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [apiRequest]);
 
   return (
     <div className="app-container" style={{ alignItems: 'center', flexDirection: 'column', minHeight: '100vh', position: 'relative', padding: '96px 16px 48px' }}>
@@ -24,7 +41,10 @@ export function SettingsPage() {
           </div>
           <div>
             <h2 style={{ margin: '0 0 8px 0', fontSize: '1.5rem' }}>{name}</h2>
-            <div style={{ color: 'var(--text-secondary)' }}>Plan: <span style={{ color: 'var(--accent-primary)', fontWeight: 'bold' }}>{USER_TIER}</span></div>
+            <div style={{ color: 'var(--text-secondary)' }}>
+              Personal plan: <span style={{ color: 'var(--accent-primary)', fontWeight: 'bold' }}>{plan ?? '…'}</span>{' '}
+              <Link to="/billing" style={{ color: 'var(--accent-primary)', marginLeft: '8px' }}>Billing</Link>
+            </div>
           </div>
         </div>
 
@@ -34,9 +54,14 @@ export function SettingsPage() {
 
         <ApiKeysPanel />
 
+        <SecurityPanel />
+
         <TokensPanel />
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '40px' }}>
+        <PrivacyPanel />
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '40px' }}>
+          <LegalLinks align="left" />
           <button className="btn-primary" style={{ padding: '12px 32px', borderRadius: '8px' }} onClick={() => navigate('/')}>Done</button>
         </div>
       </div>

@@ -23,6 +23,7 @@ export function GovernanceScreen() {
   const [data, setData] = useState<Loaded | null>(null);
   const [sampleSize, setSampleSize] = useState(30);
   const [note, setNote] = useState('');
+  const [runId, setRunId] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -185,8 +186,21 @@ export function GovernanceScreen() {
       </div>
 
       <h4 style={{ marginTop: '24px' }}>Reproducibility checks</h4>
+      <p style={muted}>Rerun a finished analysis from its stored specification and data, and compare every number with the original run.</p>
+      <div style={{ ...panel, ...row }}>
+        <label style={fieldLabel}>
+          Analysis run number
+          <input aria-label="Analysis run number" type="number" min={1} className="search-input" style={{ width: '140px' }} value={runId} onChange={e => setRunId(e.target.value)} />
+        </label>
+        <button className="btn-primary" style={{ alignSelf: 'flex-end' }} disabled={busy || !runId} onClick={() => act(async () => {
+          const check: ReproducibilityCheckInfo = await apiRequest('POST', `${base}/analysis-runs/${runId}/reproduce`);
+          return check.status === 'failed' ? `The rerun failed: ${check.error ?? 'see the check below'}` : `Rerun ${check.status.replace(/_/g, ' ')}.`;
+        }, 'The analysis could not be rerun.')}>
+          {busy ? 'Rerunning…' : 'Rerun'}
+        </button>
+      </div>
       {data.checks.length === 0 ? (
-        <p style={muted}>Rerun a finished analysis from the synthesis screen to check it reproduces.</p>
+        <p style={muted}>No analysis has been rerun yet.</p>
       ) : (
         data.checks.map(check => (
           <div key={check.id} style={{ ...row, fontSize: '0.85rem', marginTop: '4px' }}>

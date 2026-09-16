@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import crypto
+import entitlements
 import models
 from appraisal_routes import study_designs
 from audit import record_event
@@ -384,6 +385,7 @@ async def start_run(
 ):
     """Run the analysis in R. Runs of an approved analysis on the locked extraction data set are final."""
     require_stage_open(db, access.project.id, "synthesis")
+    entitlements.require(db, entitlements.account_for_project(access.project), "compute_minutes_per_month")
     analysis = _analysis(db, access, analysis_id)
     status = engine_status()
     _, needed = ANALYSIS_TYPES[analysis.analysis_type]

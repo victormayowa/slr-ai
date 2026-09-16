@@ -12,5 +12,6 @@ def registration(**overrides):
         "position_role": "Researcher",
         "reason_for_joining": "testing",
         "institution": "Test University",
+        "accept_terms": True,
         **overrides,
     }

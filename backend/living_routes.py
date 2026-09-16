@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import entitlements
 import grading
 import models
 from audit import record_event
@@ -124,6 +125,8 @@ def create_schedule(
     if not stage_completed(db, access.project.id, "search"):
         raise HTTPException(status_code=409, detail="Sign off the original search before scheduling surveillance")
     _validate_schedule(db, access, body)
+    if body.active:
+        entitlements.require(db, entitlements.account_for_project(access.project), "living_schedules")
     schedule = models.SurveillanceSchedule(
         project_id=access.project.id,
         strategy_id=body.strategy_id,
@@ -151,6 +154,8 @@ def update_schedule(
 ):
     schedule = get_in_project(db, models.SurveillanceSchedule, schedule_id, access.project.id, "Schedule")
     _validate_schedule(db, access, body)
+    if body.active and not schedule.active:
+        entitlements.require(db, entitlements.account_for_project(access.project), "living_schedules")
     schedule.strategy_id, schedule.connector, schedule.active, schedule.thresholds = (
         body.strategy_id,
         body.connector,

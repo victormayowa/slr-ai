@@ -31,7 +31,11 @@ services:
       retries: 10
 
   api:
-    build: ./backend
+    build:
+      context: ./backend
+      # The analysis tools add about 2 GB; install R locally with backend/scripts/setup_r_env.sh if you need them.
+      args:
+        WITH_ANALYSIS_TOOLS: "false"
     # Applies migrations and (re)creates the demo accounts from scripts/seed_dev.py on every start.
     command: sh -c "alembic upgrade head && python -m scripts.seed_dev && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     env_file:
@@ -41,6 +45,9 @@ services:
       DATABASE_URL: postgresql+psycopg://omnireview:omnireview-dev-password@postgres:5432/omnireview
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: http://localhost:5173
+      APP_URL: http://localhost:5173
+      DOCUMENT_STORAGE_DIR: ""
+      BENCHMARK_DATASETS_DIR: ""
       # Development-only fallback so a fresh clone starts; set JWT_SECRET_KEY in your shell to override.
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-insecure-secret-do-not-use-in-production-0123}
       # Development-only key for encrypting users' saved API keys (32 bytes, base64); override the same way.
@@ -58,12 +65,18 @@ services:
 
   # Runs background AI jobs: screening, extraction, and appraisal batches, and record embeddings.
   worker:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        WITH_ANALYSIS_TOOLS: "false"
     command: arq workers.ai_worker.WorkerSettings
     env_file:
       - path: ./backend/.env
         required: false
     environment:
+      APP_URL: http://localhost:5173
+      DOCUMENT_STORAGE_DIR: ""
+      BENCHMARK_DATASETS_DIR: ""
       DATABASE_URL: postgresql+psycopg://omnireview:omnireview-dev-password@postgres:5432/omnireview
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-insecure-secret-do-not-use-in-production-0123}

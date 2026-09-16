@@ -16,3 +16,15 @@ nav:
   - AI governance: ai-governance.md
   - Import and export: import-export.md
   - API and webhooks: api.md
+  - Plans, billing, and your account: billing-and-accounts.md
+  - Operators:
+      - Production readiness: production-readiness.md
+      - Testing in development: dev-testing.md
+  - Legal:
+      - Terms of Service: legal/terms.md
+      - Privacy Policy: legal/privacy.md
+      - Cookie Notice: legal/cookies.md
+      - Sub-processors: legal/subprocessors.md
+      - Data Processing Agreement: legal/dpa.md
+      - Acceptable Use Policy: legal/acceptable-use.md
+      - Copyright Policy: legal/copyright.md

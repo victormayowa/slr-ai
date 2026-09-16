@@ -56,6 +56,42 @@ async def send_notification_emails(ctx: dict[str, Any]) -> None:
         logger.info("Emailed %s notification(s)", sent)
 
 
+async def record_worker_heartbeat(ctx: dict[str, Any]) -> None:
+    """Every minute: report in, so the administrator system page and /api/admin/system can tell the worker is alive."""
+    from ops import heartbeat
+
+    with SessionLocal() as db:
+        heartbeat(db, "worker", {"queue": QUEUE_NAME})
+
+
+async def send_operations_report(ctx: dict[str, Any]) -> None:
+    """Daily: AI spend on the server's keys, failures, and health problems, to platform administrators."""
+    from ops import daily_report
+
+    with SessionLocal() as db:
+        daily_report(db)
+
+
+async def carry_out_account_deletions(ctx: dict[str, Any]) -> None:
+    """Hourly: anonymize accounts whose deletion grace period has passed."""
+    from account_routes import run_due_deletions
+
+    with SessionLocal() as db:
+        done = run_due_deletions(db)
+    if done:
+        logger.info("Deleted %s account(s)", done)
+
+
+async def reconcile_subscriptions(ctx: dict[str, Any]) -> None:
+    """Daily: end administrator-assigned subscriptions whose paid period and grace period have passed."""
+    from ops import reconcile_subscriptions as reconcile
+
+    with SessionLocal() as db:
+        ended = reconcile(db)
+    if ended:
+        logger.info("Ended %s expired subscription(s)", ended)
+
+
 async def remind_task_deadlines(ctx: dict[str, Any]) -> None:
     """Daily: notify assignees of tasks that are due tomorrow or overdue."""
     from notifications import remind_due_tasks
@@ -102,6 +138,10 @@ class WorkerSettings:
         cron(deliver_webhooks, second={0}),
         cron(send_notification_emails, minute={0, 15, 30, 45}),
         cron(remind_task_deadlines, hour={7}, minute={0}),
+        cron(record_worker_heartbeat, second={15}),
+        cron(send_operations_report, hour={6}, minute={10}),
+        cron(carry_out_account_deletions, minute={20}),
+        cron(reconcile_subscriptions, hour={2}, minute={40}),
     ]
     on_startup = fail_abandoned_jobs
     queue_name = QUEUE_NAME

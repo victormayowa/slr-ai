@@ -1,7 +1,23 @@
 # Production on a single VPS:
-#   SITE_ADDRESS=app.example.com POSTGRES_PASSWORD=... docker compose -f docker-compose.prod.yml up -d --build
-# backend/.env must hold production secrets (JWT_SECRET_KEY, DATA_ENCRYPTION_KEY, provider keys, SENTRY_DSN).
+#   SITE_ADDRESS=reviews.example.org POSTGRES_PASSWORD=... docker compose -f docker-compose.prod.yml up -d --build
+# backend/.env holds production secrets and settings; see docs/production-readiness.md, then run:
+#   docker compose -f docker-compose.prod.yml exec api python -m scripts.production_check --strict
 name: omnireview
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-backend-environment: &backend-environment
+  APP_ENV: production
+  DATABASE_URL: postgresql+psycopg://omnireview:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/omnireview
+  REDIS_URL: redis://redis:6379/0
+  CORS_ORIGINS: https://${SITE_ADDRESS:?Set SITE_ADDRESS to your domain, e.g. reviews.example.org}
+  APP_URL: https://${SITE_ADDRESS}
+  DOCUMENT_STORAGE_DIR: /data/documents
+  BENCHMARK_DATASETS_DIR: /data/benchmarks
 
 services:
   caddy:
@@ -9,7 +25,7 @@ services:
       context: .
       dockerfile: docker/web.Dockerfile
     environment:
-      SITE_ADDRESS: ${SITE_ADDRESS:?Set SITE_ADDRESS to your domain, e.g. app.example.com}
+      SITE_ADDRESS: ${SITE_ADDRESS}
     ports:
       - "80:80"
       - "443:443"
@@ -20,52 +36,57 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
+    logging: *logging
 
   api:
     build: ./backend
+    image: omnireview-api:latest
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips '*'"]
     env_file:
       - ./backend/.env
-    environment:
-      APP_ENV: production
-      DATABASE_URL: postgresql+psycopg://omnireview:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/omnireview
-      REDIS_URL: redis://redis:6379/0
-      CORS_ORIGINS: https://${SITE_ADDRESS}
+    environment: *backend-environment
+    volumes:
+      - documents:/data/documents
+      - benchmarks:/data/benchmarks
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 6
+      start_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
+    logging: *logging
 
-  # Runs background AI jobs. Scale with: docker compose -f docker-compose.prod.yml up -d --scale worker=2
+  # Runs background jobs (AI batches, analyses in R, surveillance, emails, webhooks, account deletions, daily reports).
+  # Scale with: docker compose -f docker-compose.prod.yml up -d --scale worker=2
   worker:
-    build: ./backend
+    image: omnireview-api:latest
     command: ["arq", "workers.ai_worker.WorkerSettings"]
     env_file:
       - ./backend/.env
-    environment:
-      APP_ENV: production
-      DATABASE_URL: postgresql+psycopg://omnireview:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/omnireview
-      REDIS_URL: redis://redis:6379/0
+    environment: *backend-environment
+    volumes:
+      - documents:/data/documents
+      - benchmarks:/data/benchmarks
     depends_on:
       api:
         condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
+    logging: *logging
 
   postgres:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: omnireview
       POSTGRES_USER: omnireview
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -74,6 +95,7 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging: *logging
 
   redis:
     image: redis:7-alpine
@@ -86,9 +108,13 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging: *logging
 
 volumes:
   postgres-data:
   redis-data:
   caddy-data:
   caddy-config:
+  # Full texts, uploads, and analysis plots. Backed up by ops/backup.sh.
+  documents:
+  benchmarks:

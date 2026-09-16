@@ -1,0 +1,9 @@
+[Unit]
+Description=OmniReview monthly restore drill
+After=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/srv/omnireview
+ExecStart=/srv/omnireview/ops/restore-drill.sh

@@ -2,7 +2,7 @@
 
 An AI-assisted platform for systematic reviews and meta-analyses, built around human decisions: the AI suggests, reviewers decide, and every number should trace back to recorded data.
 
-> **Status:** in development, not yet released. The review workflow is built end to end (roadmap W0–W17): protocol, search, screening, full texts, extraction, risk of bias, statistical synthesis in R, GRADE certainty, a manuscript whose every sentence is verified against the evidence, submission packages and repository deposits, peer review responses, living reviews with surveillance and versioned releases, team collaboration, AI governance, and the public API. Billing (W18) and production hardening (W19) are not built yet. See [docs/roadmap.md](docs/roadmap.md) for the full build plan.
+> **Status:** feature-complete for launch preparation (roadmap W0–W19): the full review workflow from protocol to living updates, collaboration, AI governance, the public API, billing with plan limits, account security (password resets, email verification, two-factor sign-in), privacy tools, and production operations (health checks, backups, deploys). Before launch, work through [docs/production-readiness.md](docs/production-readiness.md): several items (legal review, penetration test, accessibility audit, payment provider setup) can only be done by people. Institutional single sign-on is not built yet. To try everything locally, follow [docs/dev-testing.md](docs/dev-testing.md).
 
 ## Stack
 
@@ -24,6 +24,10 @@ docker compose up --build
 
 To enable AI features, copy `backend/.env.example` to `backend/.env` and add at least one provider key, or sign in and add your own key under Settings. The development compose file supplies throwaway `JWT_SECRET_KEY` and `DATA_ENCRYPTION_KEY` values; never use them in production.
 
+## Billing, accounts, and administration
+
+Plans and their limits (projects, members, monthly records, AI credits, storage, surveillance schedules, analysis time, API access, webhooks) are enforced when `BILLING_ENABLED=true`. Payments go through a provider adapter in `backend/billing.py`: `manual` (plans assigned by an administrator), `stripe`, or `dev` (a simulated checkout for local testing). Platform administrators manage plans, subscriptions, organizations, users, the model catalog, system health, readiness, and AI costs at `/admin`. Accounts have password resets, email verification, two-factor sign-in, a data download, and self-service deletion. See [docs/billing-and-accounts.md](docs/billing-and-accounts.md).
+
 ## Demo accounts
 
 For local testing, `uv run python -m scripts.seed_dev` (run automatically by `docker compose up`) creates a demo team on the project *Aspirin for primary prevention of cardiovascular events*. Every account uses the password `Review-Dev-2026!`, and development builds of the login page offer a picker that fills them in. The script refuses to run when `APP_ENV=production`.
@@ -41,7 +45,7 @@ For local testing, `uv run python -m scripts.seed_dev` (run automatically by `do
 | viewer@omnireview.test | viewer |
 | outsider@omnireview.test | none (owns a separate private project) |
 
-What each role may do is defined in [`backend/permissions.py`](backend/permissions.py).
+What each role may do is defined in [`backend/permissions.py`](backend/permissions.py). `owner@omnireview.test` is also a platform administrator; Demo University is on the Team plan and the outsider stays on Free, so plan limits can be tried with `BILLING_ENABLED=true BILLING_PROVIDER=dev`.
 
 ## Collaboration, governance, and the API
 
@@ -99,14 +103,14 @@ CI runs all of these on every push and pull request, tests the backend against P
 
 ## Production
 
-`docker-compose.prod.yml` runs Caddy (static frontend, automatic HTTPS, `/api` proxy), the API, a background AI worker, PostgreSQL, and Redis on a single server:
+`docker-compose.prod.yml` runs Caddy (the web app, automatic HTTPS, and the `/api` and `/docs` proxy), the API, the background worker, PostgreSQL, and Redis on a single server, with persistent volumes for the database and documents. The API image includes R and Pandoc for analyses and exports.
 
 ```bash
-SITE_ADDRESS=app.example.com POSTGRES_PASSWORD=change-me \
-  docker compose -f docker-compose.prod.yml up -d --build
+SITE_ADDRESS=reviews.example.org POSTGRES_PASSWORD=... docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml exec api python -m scripts.production_check --strict
 ```
 
-`backend/.env` must contain production secrets: a random `JWT_SECRET_KEY`, a random `DATA_ENCRYPTION_KEY` (it encrypts users' saved API keys, so changing or losing it makes those keys unreadable), any server provider API keys, and optionally `SENTRY_DSN`.
+**Read [docs/production-readiness.md](docs/production-readiness.md) first.** It lists every setting, decision, and check before launch. The API refuses to start in production with unsafe settings, and `scripts.production_check` reports everything else. Operations scripts live in `ops/`: `harden-server.sh`, `deploy.sh` (backup, health gate, rollback), `backup.sh` and `restore.sh` (with restic off-site copies), `restore-drill.sh`, systemd timers, and a k6 load test.
 
 ## Configuration
 

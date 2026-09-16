@@ -7,12 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+import config_guard
 import help_center
 import models
+import ops
+from account_routes import router as account_router
+from admin_console_routes import router as admin_console_router
 from ai_access import resolve_ai
 from ai_catalog import default_model
 from ai_routes import router as ai_router
@@ -21,11 +23,12 @@ from appraisal_routes import router as appraisal_router
 from audit_routes import router as audit_router
 from auth_routes import get_current_user
 from auth_routes import router as auth_router
+from billing_routes import router as billing_router
 from certainty_routes import router as certainty_router
 from collaboration_routes import help_router, invitations_router, notifications_router
 from collaboration_routes import me_router as collaboration_me_router
 from collaboration_routes import router as collaboration_router
-from database import engine, get_db
+from database import get_db
 from documents_routes import router as documents_router
 from entities_routes import router as entities_router
 from extraction_routes import router as extraction_router
@@ -61,6 +64,7 @@ from workflow_routes import router as workflow_router
 
 configure_logging()
 configure_sentry()
+config_guard.enforce()
 logger = logging.getLogger(__name__)
 
 API_DESCRIPTION = """\
@@ -108,14 +112,15 @@ def healthz():
 
 
 @app.get("/readyz")
-def readyz():
-    try:
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
-    except SQLAlchemyError as exc:
-        logger.exception("Database readiness check failed")
-        raise HTTPException(status_code=503, detail="Database unavailable") from exc
-    return {"status": "ready"}
+def readyz(db: Session = Depends(get_db)):
+    """Whether this instance can serve requests: database, schema version, Redis (when configured), and storage."""
+    checks = ops.readiness(db)
+    summary = {check.name: check.status for check in checks}
+    failed = [check for check in checks if check.status == "fail"]
+    if failed:
+        logger.error("Readiness check failed: %s", "; ".join(f"{c.name}: {c.detail}" for c in failed))
+        return JSONResponse(status_code=503, content={"status": "unavailable", "checks": summary})
+    return {"status": "ready", "checks": summary}
 
 
 app.include_router(auth_router)
@@ -154,6 +159,9 @@ app.include_router(admin_router)
 app.include_router(interop_router)
 app.include_router(webhook_router)
 app.include_router(tokens_router)
+app.include_router(account_router)
+app.include_router(billing_router)
+app.include_router(admin_console_router)
 
 
 @app.exception_handler(TaskNotReady)

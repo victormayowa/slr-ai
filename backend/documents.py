@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import entitlements
 import models
 from audit import record_event
 from document_parsing import (
@@ -167,6 +168,9 @@ def store_document(
     )
     if existing is not None:
         raise DuplicateDocument(existing)
+    entitlements.require(
+        db, entitlements.account_for_project(access.project), "storage_mb", round(len(content) / (1024 * 1024), 3)
+    )
     key = storage.save(access.project.id, content)
     try:
         document = models.Document(

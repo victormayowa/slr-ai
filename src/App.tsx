@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth/authContext';
+import { CookieNotice } from './components/CookieNotice';
 import { RequireAuth } from './auth/RequireAuth';
 import { RiskOfBiasScreen } from './features/appraisal/RiskOfBiasScreen';
 import { CertaintyScreen } from './features/certainty/CertaintyScreen';
@@ -29,10 +30,16 @@ import { SearchScreen } from './features/search/SearchScreen';
 import { SynthesisScreen } from './features/synthesis/SynthesisScreen';
 import { TopicScreen } from './features/topic/TopicScreen';
 import { AdminPage } from './pages/AdminPage';
+import { BillingPage } from './pages/BillingPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { DevCheckoutPage } from './pages/DevCheckoutPage';
 import { InvitationPage } from './pages/InvitationPage';
+import { LegalPage } from './pages/LegalPage';
 import { LoginPage } from './pages/LoginPage';
+import { PricingPage } from './pages/PricingPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { VerifyEmailPage } from './pages/VerifyEmailPage';
 
 // The only place that leaves /login after signing in, so there is no race between competing redirects.
 function LoginRoute() {
@@ -45,12 +52,20 @@ function LoginRoute() {
 
 function App() {
   return (
+    <>
     <Routes>
       <Route path="/login" element={<LoginRoute />} />
+      {/* Public pages: no sign-in needed. */}
+      <Route path="/pricing" element={<PricingPage />} />
+      <Route path="/legal/:slug" element={<LegalPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route element={<RequireAuth />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/admin" element={<AdminPage />} />
+        <Route path="/billing" element={<BillingPage />} />
+        <Route path="/billing/dev-checkout" element={<DevCheckoutPage />} />
         <Route path="/invitations/:token" element={<InvitationPage />} />
         <Route path="/projects/:projectId" element={<ProjectRoute />}>
           <Route index element={<Navigate to="setup" replace />} />
@@ -84,6 +99,8 @@ function App() {
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    <CookieNotice />
+    </>
   );
 }
 

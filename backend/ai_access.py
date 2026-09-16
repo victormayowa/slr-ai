@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import crypto
+import entitlements
 import models
 from llm.prompts import PromptTemplate
 from llm.providers import PROVIDERS
@@ -74,13 +75,19 @@ def resolve_ai(db: Session, model: models.AIModel | None, user: models.User) -> 
 
 
 def project_ai(db: Session, access: ProjectAccess) -> AIContext:
-    return resolve_ai(db, access.project.ai_model, access.user)
+    ai = resolve_ai(db, access.project.ai_model, access.user)
+    if ai.key_source == "platform":
+        entitlements.require_ai(db, access.project, ai.provider.id)
+    return ai
 
 
 def project_embedding_ai(db: Session, access: ProjectAccess) -> AIContext:
     if access.project.embedding_model is None:
         raise HTTPException(status_code=409, detail="Choose an embedding model for this project first")
-    return resolve_ai(db, access.project.embedding_model, access.user)
+    ai = resolve_ai(db, access.project.embedding_model, access.user)
+    if ai.key_source == "platform":
+        entitlements.require_ai(db, access.project, ai.provider.id)
+    return ai
 
 
 def new_ai_run(access: ProjectAccess, task: str, prompt: PromptTemplate, ai: AIContext) -> models.AIRun:

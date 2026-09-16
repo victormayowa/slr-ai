@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import entitlements
 import models
 from auth_routes import TOKEN_PREFIX, get_current_user, hash_api_token
 from database import get_db
@@ -48,6 +49,7 @@ class TokenCreate(BaseModel):
 
 @router.post("", status_code=201)
 def create_token(body: TokenCreate, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    entitlements.require_user_feature(db, user, "api_access")
     active = db.scalars(
         select(models.ApiToken).where(models.ApiToken.user_id == user.id, models.ApiToken.revoked_at.is_(None))
     ).all()

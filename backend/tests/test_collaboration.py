@@ -319,3 +319,16 @@ def test_due_task_reminders_notify_the_assignee_once(client, auth_headers, make_
     assert inbox["unread"] == 1
     assert inbox["notifications"][0]["kind"] == "task_due"
     assert "Finish screening" in inbox["notifications"][0]["title"]
+
+
+def test_an_invitation_is_emailed_to_the_address(client, auth_headers):
+    import emailer
+
+    project_id = create_project(client, auth_headers, title="Emailed review")
+    email = registration()["email"]
+
+    created = invite(client, project_id, auth_headers, email)
+
+    assert created["emailed"] is True
+    message = next(m for m in reversed(emailer.OUTBOX) if m["to"] == email)
+    assert "Emailed review" in message["text"] and created["link"] in message["text"]

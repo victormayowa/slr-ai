@@ -5,6 +5,7 @@ from typing import Any
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -49,6 +50,21 @@ class User(Base):
     # Platform administrators manage the AI model catalog and benchmarks (scripts/make_admin.py).
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     email_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    # When the address was confirmed through the link sent to it; null until then.
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Changing the password ends every session issued before it (auth_routes compares the token's pwv claim).
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    terms_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    terms_version: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    # Two-factor sign-in with an authenticator app (mfa.py). The secret is encrypted; recovery codes are hashed.
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    mfa_secret_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    # The last time step a code was accepted for, so a code can't be replayed.
+    mfa_last_step: Mapped[int | None] = mapped_column(Integer)
+    mfa_recovery_hashes: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    # Account deletion: requested by the user, carried out by the worker after a grace period (account_routes.py).
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     organization_memberships: Mapped[list["OrganizationMember"]] = relationship(
@@ -2219,3 +2235,113 @@ class WebhookDelivery(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     subscription: Mapped[WebhookSubscription] = relationship()
+
+
+# --- Accounts, billing, and operations (W18-W19) ---
+
+
+class AuthToken(Base):
+    """A single-use token sent to a user: a password reset link, an email verification link, or the second step of
+    a two-factor sign-in. Only its hash is stored."""
+
+    __tablename__ = "auth_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # "password_reset", "email_verification", or "mfa_login"
+    purpose: Mapped[str] = mapped_column(String(30))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship()
+
+
+class Plan(Base):
+    """A subscription plan and its limits (entitlements.py). Prices are shown on the pricing page; what a customer is
+    charged is set in the payment provider, linked through provider_prices."""
+
+    __tablename__ = "plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True)
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Null means the price is arranged with sales (shown as "Contact us").
+    monthly_price_cents: Mapped[int | None] = mapped_column(Integer)
+    yearly_price_cents: Mapped[int | None] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String(3), default="USD", server_default="USD")
+    # {limit name: number or null for unlimited, feature name: bool}; see entitlements.LIMITS and FEATURES.
+    limits: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    # {"stripe": {"month": "price_...", "year": "price_..."}}
+    provider_prices: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    public: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, server_default=func.now())
+
+
+class Subscription(Base):
+    """The plan a billing account (a user or an organization) is on. Accounts without one are on the free plan."""
+
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        CheckConstraint("(user_id IS NULL) <> (organization_id IS NULL)", name="ck_subscription_one_account"),
+        Index("uq_subscription_user", "user_id", unique=True, postgresql_where=text("user_id IS NOT NULL")),
+        Index(
+            "uq_subscription_organization",
+            "organization_id",
+            unique=True,
+            postgresql_where=text("organization_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
+    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"))
+    # "trialing", "active", "past_due", "canceled", or "incomplete"
+    status: Mapped[str] = mapped_column(String(20))
+    # "month", "year", or "none" (assigned by an administrator)
+    interval: Mapped[str] = mapped_column(String(10), default="none", server_default="none")
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # "manual", "dev", or "stripe" (billing.py)
+    provider: Mapped[str] = mapped_column(String(20))
+    provider_customer_id: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    provider_subscription_id: Mapped[str] = mapped_column(String(100), default="", server_default="", index=True)
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    plan: Mapped[Plan] = relationship()
+
+
+class BillingEvent(Base):
+    """A webhook from the payment provider. The unique event id makes processing idempotent: a redelivered event is
+    recognized and not applied twice."""
+
+    __tablename__ = "billing_events"
+    __table_args__ = (UniqueConstraint("provider", "event_id", name="uq_billing_event"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(20))
+    event_id: Mapped[str] = mapped_column(String(120))
+    type: Mapped[str] = mapped_column(String(80))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    # "processed", "ignored", or "failed"
+    status: Mapped[str] = mapped_column(String(20))
+    error: Mapped[str | None] = mapped_column(Text)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OpsHeartbeat(Base):
+    """When a background process last reported in (the worker, backups, restore drills), for health monitoring."""
+
+    __tablename__ = "ops_heartbeats"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(60), unique=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    detail: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))

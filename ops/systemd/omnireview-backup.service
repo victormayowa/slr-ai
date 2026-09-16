@@ -1,0 +1,10 @@
+[Unit]
+Description=OmniReview nightly backup
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/srv/omnireview
+ExecStart=/srv/omnireview/ops/backup.sh

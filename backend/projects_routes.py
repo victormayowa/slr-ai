@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import benchmarks
+import entitlements
 import models
 from ai_catalog import ai_model_out, model_ref
 from audit import record_event
@@ -149,6 +150,12 @@ def create_project(body: ProjectCreate, user: models.User = Depends(get_current_
         if in_organization is None:
             raise HTTPException(status_code=404, detail="Organization not found")
 
+    account = (
+        entitlements.Account("organization", body.organization_id)
+        if body.organization_id is not None
+        else entitlements.account_for_user(user)
+    )
+    entitlements.require(db, account, "projects")
     project = models.Project(
         title=body.title, description=body.description, organization_id=body.organization_id, owner_id=user.id
     )
@@ -289,6 +296,7 @@ def add_member(
         raise HTTPException(status_code=404, detail="No account uses that email address. Ask them to register first.")
     if any(m.user_id == user.id for m in access.project.members):
         raise HTTPException(status_code=409, detail="That person is already a member of this project")
+    entitlements.require_members(db, access.project)
 
     member = models.ProjectMember(project_id=access.project.id, user_id=user.id, role=body.role)
     db.add(member)

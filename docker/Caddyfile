@@ -1,4 +1,4 @@
-# SITE_ADDRESS is a domain (e.g. app.example.com) for automatic HTTPS, or :80 for plain HTTP.
+# SITE_ADDRESS is a domain (e.g. reviews.example.org) for automatic HTTPS, or :80 for plain HTTP.
 {$SITE_ADDRESS::80} {
 	encode zstd gzip
 
@@ -7,8 +7,15 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 		-Server
 	}
+
+	# The web app loads nothing from other sites (fonts are bundled), so it gets a strict policy. Inline styles are
+	# allowed because the interface sets style attributes. The interactive API docs load Swagger UI from a CDN, so they
+	# are left out of this policy.
+	@app not path /api/* /docs /docs/* /openapi.json
+	header @app Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
 	handle /api/* {
 		reverse_proxy api:8000
@@ -17,6 +24,17 @@
 	handle /healthz {
 		reverse_proxy api:8000
 	}
+
+	# Public API documentation.
+	handle /docs* {
+		reverse_proxy api:8000
+	}
+
+	handle /openapi.json {
+		reverse_proxy api:8000
+	}
+
+	# /readyz reports internal service health and stays on the private network (Docker health checks use it).
 
 	handle {
 		root * /srv

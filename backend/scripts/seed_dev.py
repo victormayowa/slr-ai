@@ -17,6 +17,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 import models
+from auth_routes import TERMS_VERSION
 from database import SessionLocal
 from dedup import find_duplicates
 from permissions import ProjectRole
@@ -88,6 +89,12 @@ def _upsert_user(db: Session, spec: DemoUser, password_hash: str) -> models.User
     user.orcid_id = spec.orcid_id
     user.institutional_email = spec.institutional_email
     user.is_active = True
+    # Demo accounts are ready to use: confirmed addresses, current terms accepted, and a fresh session version.
+    user.email_verified_at = user.email_verified_at or models.utcnow()
+    user.terms_accepted_at = user.terms_accepted_at or models.utcnow()
+    user.terms_version = TERMS_VERSION
+    user.password_changed_at = None
+    user.deletion_requested_at = None
     return user
 
 
@@ -462,6 +469,27 @@ def seed(db: Session) -> None:
     private_project = _get_or_create_project(db, OUTSIDER_PROJECT, outsider, None, None)
     _set_project_role(private_project, outsider, ProjectRole.OWNER)
 
+    # The owner can open the administration console (/admin) to try plans, users, and system health.
+    owner.is_platform_admin = True
+    db.flush()
+    # With BILLING_ENABLED=true, Demo University's projects are on the Team plan and the outsider's personal account
+    # stays on the Free plan, so its project limit can be hit on purpose.
+    team = db.scalar(select(models.Plan).where(models.Plan.code == "team"))
+    if team is not None and _organization_subscription(db, organization) is None:
+        db.add(
+            models.Subscription(
+                organization_id=organization.id,
+                plan_id=team.id,
+                status="active",
+                provider="manual",
+                note="Demo subscription created by scripts/seed_dev.py",
+            )
+        )
+
+
+def _organization_subscription(db: Session, organization: models.Organization) -> models.Subscription | None:
+    return db.scalar(select(models.Subscription).where(models.Subscription.organization_id == organization.id))
+
 
 def main() -> int:
     if os.getenv("APP_ENV", "development").lower() == "production":
@@ -481,6 +509,7 @@ def main() -> int:
         role = spec.project_role.value if spec.project_role else "(no demo project)"
         print(f"  {spec.email:<32} {role}")
     print("\nThe methodologist can also sign in with ORCID iD 0000-0002-1825-0097.")
+    print("owner@omnireview.test is a platform administrator (open /admin).")
     return 0
 
 
