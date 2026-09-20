@@ -23,6 +23,11 @@ be checked by software.
   DMARC set up for the sending domain.
 - [ ] **Off-site backup storage** (for example Backblaze B2 or AWS S3) for restic.
 - [ ] **Which AI providers the server pays for.** Set their keys; users can still bring their own keys for others.
+- [ ] **Confirm what each AI model costs you.** Migration 0019 seeds estimated list prices so the engines can be
+  offered, and customers are charged `AI_PRICE_MARKUP` times them (four by default, a 75% margin). Check each against
+  the provider's own price page in **Admin → AI models** before charging anyone: a cost set too low sells that engine
+  below what it costs you, and providers change prices without notice. Re-check when you add a model or a provider
+  announces a change. **[ai_prices] [ai_markup]**
 - [ ] **Benchmark thresholds** with a methodologist (defaults: screening recall ≥ 0.95, extraction accuracy ≥ 0.85,
   risk of bias kappa ≥ 0.60).
 

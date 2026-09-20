@@ -15,6 +15,7 @@ thousand records on a small model costs cents; a long manuscript draft on a prem
   or add your own provider key, and it resumes.
 - Invoiced customers can have credit added by an administrator instead of paying online.
 - A model with no price set can only be used with your own key.
+- Prices follow what the providers charge. When a provider changes its prices, ours change with them.
 
 ## Plans and limits
 
