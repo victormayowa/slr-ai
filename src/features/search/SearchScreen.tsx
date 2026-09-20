@@ -21,6 +21,9 @@ function StrategyCard({ item, sources, quality, press, onSearched, onQualityChan
 }) {
   const { projectId, setSearchItems, saveSearchString, reloadStrategies, stageInfo } = useWorkspace();
   const locked = stageInfo('protocol')?.status === 'completed';
+  // Searching only works once the protocol is signed off and while the search stage is still open.
+  const searchStage = stageInfo('search');
+  const canSearch = searchStage?.status === 'open';
   const [savedString, setSavedString] = useState(item.string);
   const [note, setNote] = useState('');
   const changed = item.string !== savedString;
@@ -106,10 +109,17 @@ function StrategyCard({ item, sources, quality, press, onSearched, onQualityChan
         <label style={labelStyle}>Maximum records
           <input type="number" className="search-input" min={1} max={sources?.max_results ?? 2000} value={limit} onChange={e => setLimit(Number(e.target.value))} style={{ width: '120px' }} />
         </label>
-        <button className="btn-primary" onClick={run} disabled={busy || !(connector || matched)} style={{ padding: '8px 16px' }}>
+        <button className="btn-primary" onClick={run} disabled={busy || !canSearch || !(connector || matched)} style={{ padding: '8px 16px' }}>
           {busy ? 'Searching…' : 'Run search'}
         </button>
       </div>
+      {!canSearch && (
+        <p style={{ fontSize: '0.85rem', color: '#9A5B00', margin: '6px 0 0' }}>
+          {searchStage?.status === 'completed'
+            ? 'Search and deduplication is signed off, so no more searches can be run. Reopen the stage above to search again.'
+            : 'Searches can only run once the protocol is signed off. Finish the protocol stage above, then come back.'}
+        </p>
+      )}
       {(chosen ?? matched) && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '6px 0 0' }}>{(chosen ?? matched)!.syntax_note}</p>}
       {chosen && matched?.key !== chosen.key && <p style={{ fontSize: '0.8rem', color: '#9A5B00', margin: '4px 0 0' }}>This string was written for {item.database}; the run is labelled as {chosen.label} so PRISMA reports stay accurate.</p>}
       <Tool title="Check syntax"><SyntaxCheck projectId={projectId} query={item.string} syntax={syntax} /></Tool>
