@@ -1,15 +1,50 @@
+/* Brand tokens: PCI-BiomedX Africa Brand Guidelines v2.0. The app uses one light theme. */
 :root {
-  --bg-color: #0b0f19;
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --accent-primary: #3b82f6;
-  --accent-secondary: #8b5cf6;
-  
-  --glass-bg: rgba(255, 255, 255, 0.03);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-hover: rgba(255, 255, 255, 0.08);
-  
-  --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.15);
+  --navy: #051C60;
+  --blue: #122C8B;
+  --elec: #1E6AE0;
+  --ocean: #176198;
+  --gold: #E7CB67;
+  --goldd: #C9A63F;
+  --green: #19A05D;
+  --bgreen: #01C576;
+  --teal: #5CAECE;
+  --mist: #ACDEDB;
+  --lab: #F4F8F9;
+  --cloud: #FBFDFC;
+  --ink: #0E1116;
+  --grey: #5A6478;
+  --slate: #9CADD1;
+  --deepfield: linear-gradient(168deg, #051C60 0%, #122C8B 62%, #0C1450 100%);
+  --orbit: linear-gradient(90deg, #5CAECE 0%, #19A05D 100%);
+  --dawn: linear-gradient(135deg, #E7CB67 0%, #C9A63F 100%);
+  --sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --body: 'IBM Plex Sans', 'Plus Jakarta Sans', system-ui, sans-serif;
+  --nav-font: 'Outfit', var(--sans);
+  /* The brand has no monospace face: search strings and code use the heading font too. */
+  --mono: var(--sans);
+  --ease: cubic-bezier(.16, .84, .24, 1);
+
+  /* Semantic names used throughout the components. */
+  --bg-color: var(--lab);
+  --text-primary: var(--ink);
+  --text-secondary: var(--grey);
+  --accent-primary: var(--elec);
+  --accent-secondary: var(--ocean);
+  --surface: #ffffff;
+  --surface-muted: var(--cloud);
+  --surface-tint: rgba(30, 106, 224, 0.07);
+  --border: rgba(5, 28, 96, 0.12);
+  --border-strong: rgba(5, 28, 96, 0.24);
+  --shadow: 0 1px 2px rgba(5, 28, 96, 0.05), 0 6px 20px rgba(5, 28, 96, 0.06);
+
+  /* Kept for components that still reference the old names. */
+  --glass-bg: var(--surface);
+  --glass-border: var(--border);
+  --glass-hover: var(--lab);
+  --shadow-glow: var(--shadow);
+
+  color-scheme: light;
 }
 
 * {
@@ -18,46 +53,58 @@
   padding: 0;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
-  font-family: 'Outfit', sans-serif;
-  background-color: var(--bg-color);
-  background-image: 
-    radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.15), transparent 25%),
-    radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.15), transparent 25%);
-  background-attachment: fixed;
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.6;
+  background: var(--bg-color);
   color: var(--text-primary);
   min-height: 100vh;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Glassmorphism Utilities */
+::selection {
+  background: var(--gold);
+  color: var(--navy);
+}
+
+:focus-visible {
+  outline: 3px solid var(--elec);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+a {
+  color: var(--elec);
+}
+
+/* Cards */
 .glass-panel {
-  background: var(--glass-bg);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--glass-border);
-  border-radius: 16px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
   padding: 24px;
-  transition: all 0.3s ease;
-}
-
-.glass-panel:hover {
-  background: var(--glass-hover);
-  border-color: rgba(255, 255, 255, 0.15);
-  box-shadow: var(--shadow-glow);
+  box-shadow: var(--shadow);
 }
 
 /* Typography */
-h1, h2, h3 {
-  font-weight: 600;
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--sans);
+  color: var(--navy);
+  font-weight: 700;
   letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 h1 {
-  font-size: 2.5rem;
-  background: linear-gradient(to right, var(--text-primary), var(--text-secondary));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  font-size: 2.25rem;
+  font-weight: 800;
   margin-bottom: 8px;
 }
 
@@ -66,63 +113,129 @@ p {
   line-height: 1.6;
 }
 
-/* Buttons */
-.btn-primary {
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-  color: white;
-  border: none;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-family: inherit;
-  font-weight: 500;
-  cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
-  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
+label, legend, th, .eyebrow {
+  font-family: var(--nav-font);
 }
 
-.btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+.eyebrow {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ocean);
+}
+
+/* Buttons */
+.btn-primary, .btn-glass, .btn-accent {
+  font-family: var(--nav-font);
+  font-weight: 600;
+  font-size: 0.95rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s var(--ease), border-color 0.2s var(--ease), box-shadow 0.2s var(--ease), transform 0.2s var(--ease);
+}
+
+.btn-primary {
+  background: var(--navy);
+  color: #ffffff;
+  border: 1px solid var(--navy);
+  padding: 11px 22px;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.btn-accent {
+  background: var(--gold);
+  color: var(--navy);
+  border: 1px solid var(--goldd);
+  padding: 11px 22px;
+  box-shadow: 0 4px 16px rgba(201, 166, 63, 0.3);
+}
+
+.btn-accent:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(201, 166, 63, 0.4);
 }
 
 .btn-glass {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  color: var(--text-primary);
-  padding: 10px 20px;
-  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--navy);
+  padding: 9px 18px;
+}
+
+.btn-glass:hover:not(:disabled) {
+  background: var(--lab);
+  border-color: var(--navy);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Browsers give buttons their own system font unless told otherwise. */
+button {
+  font-family: var(--nav-font);
+}
+
+/* Form fields. Explicit colours on every control, so dropdown options are never white on white. */
+input, select, textarea, option, optgroup {
+  color: var(--ink);
+  background-color: var(--surface);
   font-family: inherit;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
 }
 
-.btn-glass:hover {
-  background: var(--glass-hover);
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-/* Inputs */
 .search-input {
   width: 100%;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid var(--glass-border);
-  color: white;
-  padding: 16px 24px;
-  border-radius: 12px;
-  font-size: 1.1rem;
-  font-family: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--ink);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-family: var(--body);
   outline: none;
-  transition: all 0.3s ease;
+  transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
 }
 
 .search-input:focus {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  border-color: var(--elec);
+  box-shadow: 0 0 0 3px rgba(30, 106, 224, 0.18);
 }
 
 .search-input::placeholder {
-  color: var(--text-secondary);
+  color: #7A8395;
+}
+
+.search-input:disabled {
+  background: var(--lab);
+  color: var(--grey);
+}
+
+/* Tables: quiet academic style with aligned numbers. */
+table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+th {
+  color: var(--navy);
+  font-weight: 600;
+  text-align: left;
+}
+
+tbody tr:nth-child(even) {
+  background: var(--surface-muted);
+}
+
+code, pre, kbd, samp {
+  font-family: var(--mono);
+  background: var(--lab);
+  color: var(--ink);
+  border-radius: 4px;
 }
 
 /* Layout */
@@ -132,29 +245,158 @@ p {
 }
 
 .sidebar {
-  width: 280px;
-  border-right: 1px solid var(--glass-border);
-  padding: 32px 24px;
+  width: 300px;
+  flex-shrink: 0;
+  padding: 28px 20px;
   display: flex;
   flex-direction: column;
-  background: rgba(11, 15, 25, 0.8);
-  backdrop-filter: blur(20px);
+  background: var(--deepfield);
+  color: #D2DAFA;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.sidebar h2, .sidebar h3 {
+  color: #ffffff;
+}
+
+.sidebar .bell-button {
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+.sidebar :focus-visible {
+  outline-color: var(--gold);
+}
+
+.sidebar-brand {
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 1.25rem;
+  color: #ffffff;
+  letter-spacing: -0.02em;
+}
+
+.side-link {
+  display: block;
+  font-family: var(--nav-font);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #D2DAFA;
+  text-decoration: none;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid transparent;
+  transition: background 0.2s var(--ease), color 0.2s var(--ease);
+}
+
+.side-link:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.side-link.active {
+  color: #ffffff;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.12);
+  border-left-color: var(--gold);
+}
+
+.sidebar-toggle {
+  display: none;
 }
 
 .main-content {
   flex: 1;
-  padding: 40px 60px;
+  min-width: 0;
+  padding: 40px clamp(20px, 5vw, 72px);
   display: flex;
   flex-direction: column;
-  gap: 40px;
+  gap: 32px;
+}
+
+.main-content > * {
+  width: 100%;
+  max-width: 1220px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* The top bar on pages outside a project. */
+.site-bar {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px clamp(16px, 5vw, 72px);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+
+.site-bar .wordmark {
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 1.3rem;
+  color: var(--navy);
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+
+.site-bar nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--nav-font);
+}
+
+@media (max-width: 900px) {
+  .app-container {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100% !important;
+    height: auto;
+    position: static;
+    padding: 16px;
+  }
+
+  .sidebar-toggle {
+    display: inline-flex;
+  }
+
+  .sidebar:not(.open) .sidebar-body {
+    display: none;
+  }
+
+  .main-content {
+    padding: 24px 16px;
+  }
 }
 
 /* Animations */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.6s ease-out forwards;
+  animation: fadeIn 0.5s var(--ease) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in {
+    animation: none;
+  }
+
+  * {
+    transition: none !important;
+  }
 }

@@ -62,11 +62,11 @@ export function PrismaScreen() {
         <button className="btn-glass" style={smallButton} onClick={() => download('prisma/flow.csv', 'prisma-2020-flow.csv')}>Download CSV</button>
       </div>
       {svgUrl && (
-        <div style={{ overflowX: 'auto', background: '#fff', borderRadius: '12px', padding: '8px' }}>
+        <div style={{ overflowX: 'auto', background: '#ffffff', border: '1px solid var(--border)', borderRadius: '12px', padding: '8px' }}>
           <img src={svgUrl} alt="PRISMA 2020 flow diagram" style={{ maxWidth: 'none', width: '1100px' }} />
         </div>
       )}
-      <div style={{ padding: '24px', background: 'rgba(0,0,0,0.3)', borderRadius: '12px', marginTop: '16px' }}>
+      <div style={{ padding: '24px', background: 'var(--surface-muted)', borderRadius: '12px', marginTop: '16px' }}>
         <ul style={{ lineHeight: 1.8, margin: 0 }}>
           <li>Records from databases: {prisma?.identified_from_databases ?? 0}</li>
           <li>Records from trial registers: {prisma?.identified_from_registers ?? 0}</li>

@@ -41,7 +41,7 @@ export function ResetPasswordPage() {
           <p role="alert">This link is incomplete. Request a new one from the sign-in page.</p>
         ) : (
           <form onSubmit={submit}>
-            {problem && <p role="alert" style={{ color: '#ef4444' }}>{problem}</p>}
+            {problem && <p role="alert" style={{ color: '#C62828' }}>{problem}</p>}
             <input aria-label="New password" type="password" required minLength={8} placeholder="New password (at least 8 characters)" className="search-input" style={{ width: '100%', marginBottom: '12px' }} value={password} onChange={e => setPassword(e.target.value)} />
             <input aria-label="Confirm new password" type="password" required minLength={8} placeholder="Confirm new password" className="search-input" style={{ width: '100%', marginBottom: '20px' }} value={confirm} onChange={e => setConfirm(e.target.value)} />
             <button type="submit" className="btn-primary" style={{ width: '100%' }} disabled={busy}>Change password</button>

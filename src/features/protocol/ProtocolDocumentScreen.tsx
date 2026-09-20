@@ -101,11 +101,11 @@ export function ProtocolDocumentScreen() {
           const busy = busyKey === section.key;
           const visibleDraft = section.draft && showDraft(section) && !dismissed.has(section.draft.id) ? section.draft : null;
           return (
-            <article key={section.key} aria-label={section.label} style={{ background: 'rgba(0,0,0,0.25)', borderRadius: '12px', padding: '16px' }}>
+            <article key={section.key} aria-label={section.label} style={{ background: 'var(--surface-muted)', borderRadius: '12px', padding: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <h4 style={{ margin: 0 }}>
                   {section.label}
-                  {section.required && <span style={{ color: '#f59e0b', fontSize: '0.75rem', marginLeft: '8px' }}>Required</span>}
+                  {section.required && <span style={{ color: '#9A5B00', fontSize: '0.75rem', marginLeft: '8px' }}>Required</span>}
                 </h4>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>PRISMA-P item {section.prisma_p_item}</span>
               </div>
@@ -118,11 +118,11 @@ export function ProtocolDocumentScreen() {
                 onChange={e => setTexts(prev => ({ ...prev, [section.key]: e.target.value }))}
               />
               {visibleDraft && (
-                <div role="region" aria-label={`AI draft of ${section.label}`} style={{ marginTop: '10px', background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '8px', padding: '12px' }}>
+                <div role="region" aria-label={`AI draft of ${section.label}`} style={{ marginTop: '10px', background: 'rgba(30, 106, 224, 0.08)', border: '1px solid rgba(30, 106, 224, 0.3)', borderRadius: '8px', padding: '12px' }}>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>AI draft by {visibleDraft.provider} {visibleDraft.model}</div>
                   <p style={{ whiteSpace: 'pre-wrap', margin: '8px 0' }}>{visibleDraft.content.content}</p>
                   {visibleDraft.content.missing_information.length > 0 && (
-                    <div style={{ fontSize: '0.85rem', color: '#f59e0b' }}>Missing information: {visibleDraft.content.missing_information.join('; ')}</div>
+                    <div style={{ fontSize: '0.85rem', color: '#9A5B00' }}>Missing information: {visibleDraft.content.missing_information.join('; ')}</div>
                   )}
                   <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                     <button className="btn-glass" onClick={() => acceptDraft(section, visibleDraft)} style={{ padding: '6px 12px' }}>Use this draft</button>

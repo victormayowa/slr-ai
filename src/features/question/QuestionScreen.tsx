@@ -123,7 +123,7 @@ export function QuestionScreen() {
           <textarea id="review-question" className="search-input" style={{ height: '72px', resize: 'vertical' }} value={question.question} onChange={e => update({ question: e.target.value })} />
         </div>
 
-        <fieldset style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '16px' }}>
+        <fieldset style={{ border: '1px solid var(--border)', borderRadius: '12px', padding: '16px' }}>
           <legend style={{ color: 'var(--text-primary)', padding: '0 8px' }}>FINER assessment</legend>
           {catalog.finer_criteria.map(criterion => {
             const assessment = question.finer[criterion.key];
@@ -156,7 +156,7 @@ export function QuestionScreen() {
         </fieldset>
 
         {suggestion && (
-          <div role="region" aria-label="AI question suggestion" style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '12px', padding: '16px' }}>
+          <div role="region" aria-label="AI question suggestion" style={{ background: 'rgba(30, 106, 224, 0.08)', border: '1px solid rgba(30, 106, 224, 0.3)', borderRadius: '12px', padding: '16px' }}>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Suggested by {suggestion.provider} {suggestion.model}. Nothing changes until you apply and save it.</div>
             <p style={{ margin: '8px 0' }}><strong>{suggestion.content.framework}:</strong> {suggestion.content.question}</p>
             <ul style={{ margin: '0 0 12px', paddingLeft: '20px' }}>

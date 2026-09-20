@@ -8,9 +8,9 @@ type StageGateProps = {
 };
 
 const STATUS_DISPLAY = {
-  open: { label: 'Open', color: '#3b82f6' },
-  completed: { label: 'Signed off', color: '#10b981' },
-  not_started: { label: 'Not started', color: '#9ca3af' },
+  open: { label: 'Open', color: '#1E5FCC' },
+  completed: { label: 'Signed off', color: '#137A47' },
+  not_started: { label: 'Not started', color: '#5A6478' },
 } as const;
 
 // Shows a workflow stage's sign-off state and requirements, with the actions the viewer's role allows.
@@ -21,7 +21,7 @@ export function StageGate({ stage, busy = false, onComplete, onReopen }: StageGa
   const secondaryText = { margin: '8px 0 0', color: 'var(--text-secondary)', fontSize: '0.9rem' };
 
   return (
-    <section aria-label={`${stage.label} sign-off`} style={{ border: `1px solid ${display.color}66`, background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
+    <section aria-label={`${stage.label} sign-off`} style={{ border: `1px solid ${display.color}66`, background: 'var(--surface-muted)', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <div>
           <strong>{stage.label}</strong>
@@ -53,7 +53,7 @@ export function StageGate({ stage, busy = false, onComplete, onReopen }: StageGa
       {stage.status === 'open' && stage.requirements.length > 0 && (
         <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0' }}>
           {stage.requirements.map(requirement => (
-            <li key={requirement.label} style={{ color: requirement.met ? '#10b981' : 'var(--text-secondary)', fontSize: '0.9rem' }}>
+            <li key={requirement.label} style={{ color: requirement.met ? '#137A47' : 'var(--text-secondary)', fontSize: '0.9rem' }}>
               {requirement.met ? '✓' : '○'} {requirement.label}
             </li>
           ))}

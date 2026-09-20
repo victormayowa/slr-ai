@@ -168,12 +168,12 @@ export type StudyInfo = {
 export type LinkCandidate = { record: RecordBrief; other: RecordBrief; study_id: number; other_study_id: number; score: number; reasons: string[] };
 
 export const CELL_STATES: Record<CellState, { label: string; color: string }> = {
-  empty: { label: 'Not extracted', color: '#9ca3af' },
-  final: { label: 'Final', color: '#10b981' },
-  agreed: { label: 'Agreed', color: '#10b981' },
-  reconciled: { label: 'Reconciled', color: '#10b981' },
-  discrepancy: { label: 'Discrepancy', color: '#ef4444' },
-  awaiting_second_extractor: { label: 'Waiting for a second extractor', color: '#f59e0b' },
-  awaiting_ai: { label: 'Waiting for AI extraction', color: '#f59e0b' },
-  arms_missing: { label: 'Define the arms first', color: '#f59e0b' },
+  empty: { label: 'Not extracted', color: '#5A6478' },
+  final: { label: 'Final', color: '#137A47' },
+  agreed: { label: 'Agreed', color: '#137A47' },
+  reconciled: { label: 'Reconciled', color: '#137A47' },
+  discrepancy: { label: 'Discrepancy', color: '#C62828' },
+  awaiting_second_extractor: { label: 'Waiting for a second extractor', color: '#9A5B00' },
+  awaiting_ai: { label: 'Waiting for AI extraction', color: '#9A5B00' },
+  arms_missing: { label: 'Define the arms first', color: '#9A5B00' },
 };

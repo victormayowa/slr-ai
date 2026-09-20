@@ -8,7 +8,8 @@ import { BLUE, muted } from './ui';
 const POLL_MS = 60_000;
 
 // Unread mentions, replies, task assignments, and reminders, with a link to whatever each one is about.
-export function NotificationBell() {
+// `align` sets which edge the list opens from: 'end' for bars on the right of the page, 'start' in the sidebar.
+export function NotificationBell({ align = 'end' }: { align?: 'start' | 'end' }) {
   const { apiRequest } = useAuth();
   const navigate = useNavigate();
   const [data, setData] = useState<NotificationList | null>(null);
@@ -69,7 +70,8 @@ export function NotificationBell() {
       <button
         aria-label={unread ? `Notifications (${unread} unread)` : 'Notifications'}
         onClick={() => setOpen(value => !value)}
-        style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-secondary)', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', position: 'relative' }}
+        className="bell-button"
+        style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-secondary)', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', position: 'relative' }}
       >
         🔔
         {unread > 0 && (
@@ -83,7 +85,7 @@ export function NotificationBell() {
           role="dialog"
           aria-label="Notifications"
           className="glass-panel"
-          style={{ position: 'absolute', right: 0, top: '44px', width: '340px', maxHeight: '420px', overflowY: 'auto', padding: '12px', zIndex: 200 }}
+          style={{ position: 'absolute', ...(align === 'end' ? { right: 0 } : { left: 0 }), top: '44px', width: '340px', maxHeight: '420px', overflowY: 'auto', padding: '12px', zIndex: 200 }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
             <strong style={{ fontSize: '0.9rem' }}>Notifications</strong>
@@ -99,7 +101,7 @@ export function NotificationBell() {
             <button
               key={notification.id}
               onClick={() => openNotification(notification.id, notification.link)}
-              style={{ display: 'block', width: '100%', textAlign: 'left', background: notification.read_at ? 'transparent' : 'rgba(59,130,246,0.08)', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.05)', color: 'var(--text-primary)', padding: '10px 8px', cursor: 'pointer', fontSize: '0.82rem' }}
+              style={{ display: 'block', width: '100%', textAlign: 'left', background: notification.read_at ? 'transparent' : 'rgba(30, 106, 224, 0.08)', border: 'none', borderBottom: '1px solid var(--border)', color: 'var(--text-primary)', padding: '10px 8px', cursor: 'pointer', fontSize: '0.82rem' }}
             >
               <div style={{ fontWeight: notification.read_at ? 400 : 600 }}>{notification.title}</div>
               {notification.body && <div style={{ ...muted, fontSize: '0.78rem' }}>{notification.body.slice(0, 120)}</div>}

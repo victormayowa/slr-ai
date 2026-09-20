@@ -21,7 +21,7 @@ type Failures = {
 };
 
 const money = (value: number) => `$${value.toFixed(2)}`;
-const cell = { padding: '4px 8px', borderBottom: '1px solid rgba(255,255,255,0.05)' } as const;
+const cell = { padding: '4px 8px', borderBottom: '1px solid var(--border)' } as const;
 
 // AI spend on the server's own keys (what the operator pays for), and recent failures.
 export function CostsTab() {

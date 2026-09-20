@@ -22,52 +22,46 @@ function ProjectLayout({ projectId }: { projectId: number }) {
   const { userName } = useAuth();
   const navigate = useNavigate();
   const [sharing, setSharing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const name = userName ?? '';
 
   return (
     <WorkspaceContext.Provider value={workspace}>
       <div className="app-container">
-        <aside className="sidebar" style={{ width: '320px', overflowY: 'auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '32px', cursor: 'pointer' }} onClick={() => navigate('/')}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>O</div>
-            <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Back to Home</h2>
-          </div>
-
-          <div style={{ marginBottom: '24px', paddingBottom: '24px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-              <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', fontWeight: 'bold', boxShadow: '0 4px 12px rgba(59,130,246,0.3)' }}>
-                {name.charAt(0).toUpperCase()}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{name}</div>
-              </div>
-              <NotificationBell />
-            </div>
-            <button disabled={!workspace.currentProject} style={{ width: '100%', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)', color: 'var(--accent-primary)', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => setSharing(true)} onMouseOver={e => e.currentTarget.style.background = 'rgba(59,130,246,0.2)'} onMouseOut={e => e.currentTarget.style.background = 'rgba(59,130,246,0.1)'}>
-              👥 Share / Collaborate
+        <aside className={`sidebar${menuOpen ? ' open' : ''}`} aria-label="Project navigation">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '24px' }}>
+            <NavLink to="/" className="sidebar-brand" style={{ textDecoration: 'none' }}>OmniReview</NavLink>
+            <button className="btn-glass sidebar-toggle" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)} style={{ padding: '6px 12px' }}>
+              {menuOpen ? 'Close' : 'Menu'}
             </button>
           </div>
 
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {PROJECT_TABS.map(tab => (
-              <NavLink
-                key={tab.path}
-                to={tab.path}
-                className="btn-glass"
-                style={({ isActive }) => ({
-                  textAlign: 'left', fontSize: '0.9rem', padding: '10px 12px', textDecoration: 'none', display: 'block',
-                  border: isActive ? '1px solid var(--accent-primary)' : '1px solid transparent',
-                  background: isActive ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                  color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)'
-                })}
-              >
-                {tab.label}
-              </NavLink>
-            ))}
-          </nav>
+          <div className="sidebar-body" style={{ overflowY: 'auto', flex: 1 }}>
+            <div style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid var(--border)' }}>
+              <NavLink to="/" className="side-link" end style={{ marginBottom: '12px', paddingLeft: '0' }}>← All projects</NavLink>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+                <div aria-hidden style={{ width: '34px', height: '34px', borderRadius: '50%', background: 'var(--gold)', color: 'var(--navy)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--sans)', fontWeight: 800 }}>
+                  {name.charAt(0).toUpperCase()}
+                </div>
+                <div style={{ flex: 1, fontFamily: 'var(--nav-font)', fontSize: '0.9rem', fontWeight: 600, color: '#ffffff' }}>{name}</div>
+                <NotificationBell align="start" />
+              </div>
+              <button className="btn-accent" disabled={!workspace.currentProject} style={{ width: '100%', padding: '9px' }} onClick={() => setSharing(true)}>
+                Share and collaborate
+              </button>
+            </div>
+
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px' }} onClick={() => setMenuOpen(false)}>
+              {PROJECT_TABS.map(tab => (
+                <NavLink key={tab.path} to={tab.path} className="side-link">
+                  {tab.label}
+                </NavLink>
+              ))}
+            </nav>
+          </div>
         </aside>
 
-        <main className="main-content" style={{ overflowY: 'auto' }}>
+        <main className="main-content">
           {workspace.loadError ? (
             <section className="glass-panel" role="alert" style={{ padding: '32px', maxWidth: '640px', margin: '0 auto' }}>
               <h3 style={{ marginTop: 0 }}>This project couldn't be opened</h3>
@@ -79,9 +73,9 @@ function ProjectLayout({ projectId }: { projectId: number }) {
           ) : (
             <p style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>Loading project…</p>
           )}
-          <footer style={{ textAlign: 'center', padding: '40px 24px', color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '40px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+          <footer style={{ textAlign: 'center', padding: '40px 24px', color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '40px', borderTop: '1px solid var(--border)' }}>
             <div style={{ marginBottom: '16px' }}>
-              <span style={{ fontWeight: 'bold', color: 'var(--text-primary)' }}>OmniReview AI Research Platform</span>
+              <span style={{ fontFamily: 'var(--sans)', fontWeight: 700, color: 'var(--navy)' }}>OmniReview research platform</span>
             </div>
             <div style={{ marginBottom: '16px' }}>
               <LegalLinks />

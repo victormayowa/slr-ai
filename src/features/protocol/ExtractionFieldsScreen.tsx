@@ -191,7 +191,7 @@ export function ExtractionFieldsScreen() {
               <input aria-label={`Guidance for ${field.name || 'new field'}`} className="search-input" style={{ flex: '1 1 300px' }} placeholder="Guidance for extractors (optional)" value={field.help_text} onChange={e => update(index, { help_text: e.target.value })} />
               <button className="btn-glass" style={smallButton} onClick={() => move(index, -1)} aria-label={`Move ${field.name} up`}>↑</button>
               <button className="btn-glass" style={smallButton} onClick={() => move(index, 1)} aria-label={`Move ${field.name} down`}>↓</button>
-              <button className="btn-glass" style={{ ...smallButton, color: '#ef4444' }} onClick={() => setFields(prev => prev.filter((_, i) => i !== index))}>Remove</button>
+              <button className="btn-glass" style={{ ...smallButton, color: '#C62828' }} onClick={() => setFields(prev => prev.filter((_, i) => i !== index))}>Remove</button>
             </div>
           </div>
         ))}

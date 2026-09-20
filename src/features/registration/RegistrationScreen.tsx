@@ -4,7 +4,7 @@ import { REGISTRATION_STATUS_LABELS, type ProsperoField, type ProtocolRegistrati
 import { useAuth } from '../../auth/authContext';
 import { useWorkspace } from '../project/workspaceContext';
 
-const panel = { background: 'rgba(0,0,0,0.25)', borderRadius: '12px', padding: '16px' } as const;
+const panel = { background: 'var(--surface-muted)', borderRadius: '12px', padding: '16px' } as const;
 const labelStyle = { display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '4px' } as const;
 
 type RegistrationForm = { registry: 'PROSPERO' | 'OSF' | 'other'; registry_name: string; status: 'submitted' | 'registered'; registration_id: string; url: string };
@@ -148,7 +148,7 @@ export function RegistrationScreen() {
                     {registration.registration_id && ` · ${registration.registration_id}`} · {REGISTRATION_STATUS_LABELS[registration.status]} · protocol version {registration.protocol_version}
                     {registration.url && <> · <a href={registration.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-primary)' }}>open</a></>}
                     {registration.waiver_reason && <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Reason: {registration.waiver_reason}</div>}
-                    {outdated && <div style={{ fontSize: '0.85rem', color: '#f59e0b' }}>The protocol is now version {registration.latest_protocol_version}. Update the registry record, then confirm it here.</div>}
+                    {outdated && <div style={{ fontSize: '0.85rem', color: '#9A5B00' }}>The protocol is now version {registration.latest_protocol_version}. Update the registry record, then confirm it here.</div>}
                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
                       {registration.status === 'submitted' && (
                         <button className="btn-glass" onClick={() => update(registration, { status: 'registered' }, 'Marked as registered.')} disabled={busy !== null} style={{ padding: '4px 10px', fontSize: '0.8rem' }}>Mark as registered</button>
@@ -166,7 +166,7 @@ export function RegistrationScreen() {
           )}
         </div>
 
-        {!locked && <p role="note" style={{ color: '#f59e0b', margin: 0 }}>Sign off the protocol before registering it, depositing it on OSF, or waiving registration.</p>}
+        {!locked && <p role="note" style={{ color: '#9A5B00', margin: 0 }}>Sign off the protocol before registering it, depositing it on OSF, or waiving registration.</p>}
 
         <div style={panel}>
           <h4 style={{ marginTop: 0 }}>Record a registration</h4>
@@ -205,10 +205,10 @@ export function RegistrationScreen() {
             <p style={{ fontSize: '0.9rem' }}>Copy each field into the PROSPERO form. Field names may differ slightly from the current form.</p>
             <dl style={{ margin: 0 }}>
               {fields.map(item => (
-                <div key={item.field} style={{ padding: '10px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <div key={item.field} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
                   <dt style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
                     <strong>{item.field}</strong>
-                    <span style={{ fontSize: '0.8rem', color: item.ready ? '#10b981' : '#f59e0b' }}>{item.ready ? 'Ready' : 'Needs input'}</span>
+                    <span style={{ fontSize: '0.8rem', color: item.ready ? '#137A47' : '#9A5B00' }}>{item.ready ? 'Ready' : 'Needs input'}</span>
                   </dt>
                   <dd style={{ margin: '4px 0 0' }}>
                     <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>{item.value || <em style={{ color: 'var(--text-secondary)' }}>Nothing recorded</em>}</div>

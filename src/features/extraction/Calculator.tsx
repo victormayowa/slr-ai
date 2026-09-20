@@ -61,7 +61,7 @@ export function Calculator({ conversions, target, onUse, onClose }: Props) {
         ))}
         <button className="btn-primary" style={{ ...smallButton, alignSelf: 'flex-end' }} onClick={compute}>Calculate</button>
       </div>
-      {error && <p role="status" style={{ color: '#ef4444' }}>{error}</p>}
+      {error && <p role="status" style={{ color: '#C62828' }}>{error}</p>}
       {result && (
         <div style={{ marginTop: '8px' }}>
           <p style={{ margin: '4px 0' }}>{Object.entries(result.values).map(([key, value]) => `${key} = ${fmt(value, 4)}`).join(' · ')}</p>

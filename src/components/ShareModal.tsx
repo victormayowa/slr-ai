@@ -70,12 +70,12 @@ export function ShareModal({ project, onClose, onMembersChanged }: ShareModalPro
   };
 
   return (
-    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(5, 28, 96, 0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
       <div className="glass-panel" role="dialog" aria-label={`Members of ${project.title}`} style={{ width: '100%', maxWidth: '540px', padding: '32px' }}>
         <h3 style={{ marginBottom: '16px' }}>Members of {project.title}</h3>
         <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px 0', maxHeight: '240px', overflowY: 'auto' }}>
           {members.map(member => (
-            <li key={member.user_id} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.9rem' }}>
+            <li key={member.user_id} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '8px 0', borderBottom: '1px solid var(--border)', fontSize: '0.9rem' }}>
               <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{member.name} <span style={{ color: 'var(--text-secondary)' }}>{member.email}</span></span>
               <span style={{ color: 'var(--accent-primary)', whiteSpace: 'nowrap' }}>{PROJECT_ROLE_LABELS[member.role] ?? member.role}</span>
             </li>
@@ -83,7 +83,7 @@ export function ShareModal({ project, onClose, onMembersChanged }: ShareModalPro
         </ul>
         {notice && <p role="status" style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>{notice}</p>}
         {link && (
-          <p style={{ background: 'rgba(0,0,0,0.25)', borderRadius: '8px', padding: '10px', fontSize: '0.78rem', overflowWrap: 'anywhere', marginBottom: '16px' }}>
+          <p style={{ background: 'var(--surface-muted)', borderRadius: '8px', padding: '10px', fontSize: '0.78rem', overflowWrap: 'anywhere', marginBottom: '16px' }}>
             <code>{link}</code>
           </p>
         )}
@@ -113,7 +113,7 @@ export function ShareModal({ project, onClose, onMembersChanged }: ShareModalPro
               </div>
             )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-              <button type="button" style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-secondary)', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: 500 }} onClick={onClose}>Close</button>
+              <button type="button" style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-secondary)', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: 500 }} onClick={onClose}>Close</button>
               <button type="submit" className="btn-primary" style={{ padding: '10px 24px', borderRadius: '8px', fontWeight: 600 }}>Send invitation</button>
             </div>
           </form>

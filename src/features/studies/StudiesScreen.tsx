@@ -105,7 +105,7 @@ export function StudiesScreen() {
         <div style={{ ...panel, marginBottom: '20px' }}>
           <h4 style={{ marginTop: 0 }}>Reports that may describe the same study</h4>
           {candidates.map(candidate => (
-            <div key={`${candidate.record.id}-${candidate.other.id}`} style={{ borderTop: '1px solid rgba(255,255,255,0.08)', padding: '8px 0' }}>
+            <div key={`${candidate.record.id}-${candidate.other.id}`} style={{ borderTop: '1px solid var(--border)', padding: '8px 0' }}>
               <div>{candidate.record.title} <span style={muted}>({candidate.record.year})</span></div>
               <div>{candidate.other.title} <span style={muted}>({candidate.other.year})</span></div>
               <div style={{ ...row, marginTop: '4px' }}>
@@ -125,7 +125,7 @@ export function StudiesScreen() {
             <div style={{ ...row, justifyContent: 'space-between' }}>
               <strong>{study.label}</strong>
               <div style={row}>
-                {study.registry_ids.map(id => <span key={id} style={chip('#3b82f6')}>{id}</span>)}
+                {study.registry_ids.map(id => <span key={id} style={chip('#1E5FCC')}>{id}</span>)}
                 <button className="btn-glass" style={smallButton} disabled={busy} onClick={() => edit(study)}>Edit</button>
               </div>
             </div>

@@ -8,8 +8,8 @@ import { useAuth } from '../../auth/authContext';
 import { AMBER, BLUE, GREEN, GREY, RED, chip, fieldLabel, fmt, muted, panel, row, smallButton } from '../../components/ui';
 import { useWorkspace } from '../project/workspaceContext';
 
-const CERTAINTY_COLORS: Record<string, string> = { high: GREEN, moderate: '#84cc16', low: AMBER, very_low: RED };
-const COVERAGE_COLORS: Record<string, string> = { reported: GREEN, not_reported: AMBER, missing: 'rgba(255,255,255,0.08)' };
+const CERTAINTY_COLORS: Record<string, string> = { high: GREEN, moderate: '#4D7C0F', low: AMBER, very_low: RED };
+const COVERAGE_COLORS: Record<string, string> = { reported: GREEN, not_reported: AMBER, missing: '#C5CDDB' };
 const ALERT_COLORS: Record<string, string> = { retraction: RED, large_trial: AMBER, new_eligible: BLUE, new_records: GREY, feed_update: GREY };
 
 type Loaded = {
@@ -170,7 +170,7 @@ export function LivingScreen() {
         <table style={{ width: '100%', fontSize: '0.8rem', borderCollapse: 'collapse' }}>
           <tbody>
             {data.candidates.filter(c => c.status !== 'imported').map(candidate => (
-              <tr key={candidate.id} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+              <tr key={candidate.id} style={{ borderTop: '1px solid var(--border)' }}>
                 <td style={{ padding: '6px' }}>
                   <strong>{candidate.title}</strong>
                   <div style={muted}>

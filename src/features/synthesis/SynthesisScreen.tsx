@@ -289,7 +289,7 @@ export function SynthesisScreen() {
         {metaLoading ? `Writing with ${aiModelName}...` : 'Write narrative summary'}
       </button>
       {metaReport && (
-        <pre style={{ ...panel, whiteSpace: 'pre-wrap', fontFamily: 'system-ui, sans-serif', marginTop: '16px' }}>{metaReport}</pre>
+        <pre style={{ ...panel, whiteSpace: 'pre-wrap', fontFamily: 'var(--body)', marginTop: '16px' }}>{metaReport}</pre>
       )}
     </section>
   );
@@ -677,7 +677,7 @@ function RunView({ run, plotUrls, onDownload }: { run: RunDetail; plotUrls: Reco
       )}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
         {Object.entries(plotUrls).map(([name, url]) => (
-          <figure key={name} style={{ margin: 0, background: 'white', borderRadius: '8px', padding: '8px', maxWidth: '100%' }}>
+          <figure key={name} style={{ margin: 0, background: '#ffffff', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px', maxWidth: '100%' }}>
             <img src={url} alt={`${name.replace(/_/g, ' ')} plot`} style={{ maxWidth: '640px', width: '100%' }} />
             <figcaption style={{ ...row, color: '#111', fontSize: '0.8rem' }}>
               {name.replace(/_/g, ' ')}
@@ -727,7 +727,7 @@ function IpdPanel({ studies, datasets, busy, onUpload, onMap }: IpdProps) {
         const mapping = mappings[study.id] ?? { treatment: dataset?.mapping.treatment ?? '', outcome: dataset?.mapping.outcome ?? '', outcome_type: dataset?.validation.outcome_type ?? 'binary' };
         const setMapping = (change: Partial<typeof mapping>) => setMappings(prev => ({ ...prev, [study.id]: { ...mapping, ...change } }));
         return (
-          <div key={study.id} style={{ ...row, borderTop: '1px solid rgba(255,255,255,0.1)', padding: '8px 0' }}>
+          <div key={study.id} style={{ ...row, borderTop: '1px solid var(--border)', padding: '8px 0' }}>
             <strong style={{ minWidth: '160px' }}>{study.label}</strong>
             <input aria-label={`Participant data for ${study.label}`} type="file" accept=".csv,text/csv" disabled={busy} onChange={e => e.target.files?.[0] && onUpload(study.id, e.target.files[0])} />
             {dataset && (

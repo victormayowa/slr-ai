@@ -225,7 +225,7 @@ export function CertaintyScreen() {
             <thead>
               <tr>
                 {sof.columns.map(c => (
-                  <th key={c} style={{ textAlign: 'left', padding: '6px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                  <th key={c} style={{ textAlign: 'left', padding: '6px', borderBottom: '1px solid var(--border)' }}>
                     {c}
                   </th>
                 ))}
@@ -368,7 +368,7 @@ function GradeEditor({ grade, catalog, busy, onSave, onSignOff, onClose }: Grade
             const suggestion = grade.suggestions[domain.key];
             const entry = draft.domains[domain.key];
             return (
-              <tr key={domain.key} style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+              <tr key={domain.key} style={{ borderTop: '1px solid var(--border)' }}>
                 <td style={{ padding: '6px', width: '180px' }}>
                   <strong>{domain.label}</strong>
                   {suggestion && <div style={muted}>Suggested: {RATING_LABELS[suggestion.suggested_rating]}</div>}
@@ -433,7 +433,7 @@ function EtdEditor({ framework, catalog, grades, busy, onSave, onSignOff, onClos
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
         <tbody>
           {catalog.etd_criteria.map(criterion => (
-            <tr key={criterion.key} style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            <tr key={criterion.key} style={{ borderTop: '1px solid var(--border)' }}>
               <td style={{ padding: '6px', width: '30%' }}>{criterion.label}</td>
               <td style={{ padding: '6px', width: '22%' }}>
                 <select aria-label={criterion.label} className="search-input" value={draft.criteria[criterion.key]?.judgment ?? ''} onChange={e => setCriterion(criterion.key, { judgment: e.target.value })}>

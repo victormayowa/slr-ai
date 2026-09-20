@@ -51,7 +51,7 @@ export function CellCard({ cell, field, components, canExtract, canReconcile, pr
   const acceptable = suggestion && (suggestion.grounding === 'grounded' || suggestion.grounding === 'not_reported') && (suggestion.structured || suggestion.not_reported);
 
   return (
-    <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', padding: '10px 0' }} aria-label={label} role="group">
+    <div style={{ borderTop: '1px solid var(--border)', padding: '10px 0' }} aria-label={label} role="group">
       <div style={{ ...row, justifyContent: 'space-between' }}>
         <span>{cell.arm_label ? <strong>{cell.arm_label}</strong> : <strong>{field.name}</strong>}</span>
         <span style={chip(state.color)}>{state.label}</span>
@@ -66,7 +66,7 @@ export function CellCard({ cell, field, components, canExtract, canReconcile, pr
 
       {suggestion && (
         <div style={{ fontSize: '0.85rem', marginTop: '6px' }}>
-          <span style={chip(suggestion.grounding === 'ungrounded' ? RED : '#3b82f6')}>AI</span>{' '}
+          <span style={chip(suggestion.grounding === 'ungrounded' ? RED : '#1E5FCC')}>AI</span>{' '}
           {suggestion.not_reported ? 'Not reported' : suggestion.display || suggestion.value} {suggestion.unit && <span style={muted}>{suggestion.unit}</span>}
           {suggestion.confidence != null && <span style={muted}> · confidence {percent(suggestion.confidence)}</span>}
           {suggestion.ambiguous && <span style={{ ...chip(AMBER), marginLeft: '6px' }}>ambiguous in the report</span>}

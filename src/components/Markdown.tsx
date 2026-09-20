@@ -51,11 +51,11 @@ export function Markdown({ text }: { text: string }) {
         <div key={key} style={{ overflowX: 'auto' }}>
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.9rem' }}>
             <thead>
-              <tr>{cells(header).map((cell, i) => <th key={i} style={{ textAlign: 'left', padding: '6px', borderBottom: '1px solid rgba(255,255,255,0.15)' }}>{inline(cell)}</th>)}</tr>
+              <tr>{cells(header).map((cell, i) => <th key={i} style={{ textAlign: 'left', padding: '6px', borderBottom: '1px solid var(--border-strong)' }}>{inline(cell)}</th>)}</tr>
             </thead>
             <tbody>
               {body.map((row, r) => (
-                <tr key={r}>{cells(row).map((cell, i) => <td key={i} style={{ padding: '6px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>{inline(cell)}</td>)}</tr>
+                <tr key={r}>{cells(row).map((cell, i) => <td key={i} style={{ padding: '6px', borderBottom: '1px solid var(--border)' }}>{inline(cell)}</td>)}</tr>
               ))}
             </tbody>
           </table>
@@ -77,7 +77,7 @@ export function Markdown({ text }: { text: string }) {
       const quoted: string[] = [];
       while (index < lines.length && lines[index].startsWith('>')) quoted.push(lines[index++].replace(/^>\s?/, ''));
       blocks.push(
-        <blockquote key={key} style={{ borderLeft: '3px solid #f59e0b', margin: '12px 0', padding: '4px 12px', color: 'var(--text-secondary)' }}>
+        <blockquote key={key} style={{ borderLeft: '3px solid #9A5B00', margin: '12px 0', padding: '4px 12px', color: 'var(--text-secondary)' }}>
           {inline(quoted.join(' '))}
         </blockquote>,
       );

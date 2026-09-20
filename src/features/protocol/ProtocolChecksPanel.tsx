@@ -4,7 +4,7 @@ import type { ProtocolChecks, ProtocolIssue } from '../../api/protocol';
 import { useAuth } from '../../auth/authContext';
 import { useWorkspace } from '../project/workspaceContext';
 
-const COLORS = { error: '#ef4444', warning: '#f59e0b' } as const;
+const COLORS = { error: '#C62828', warning: '#9A5B00' } as const;
 
 type IssueLike = Pick<ProtocolIssue, 'severity' | 'message' | 'criterion_ids'>;
 
@@ -65,7 +65,7 @@ export function ProtocolChecksPanel({ version }: { version: number }) {
   );
 
   return (
-    <div role="region" aria-label="Protocol checks" style={{ background: 'rgba(0,0,0,0.25)', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
+    <div role="region" aria-label="Protocol checks" style={{ background: 'var(--surface-muted)', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
         <h4 style={{ margin: 0 }}>Protocol checks</h4>
         <button className="btn-glass" onClick={review} disabled={reviewing} style={{ padding: '6px 12px' }}>
@@ -73,7 +73,7 @@ export function ProtocolChecksPanel({ version }: { version: number }) {
         </button>
       </div>
       {notice && <p role="status" style={{ color: 'var(--text-secondary)' }}>{notice}</p>}
-      {checks && checks.issues.length === 0 && <p style={{ color: '#10b981' }}>No problems found by the rule-based checks.</p>}
+      {checks && checks.issues.length === 0 && <p style={{ color: '#137A47' }}>No problems found by the rule-based checks.</p>}
       {checks && checks.issues.length > 0 && renderIssues(checks.issues, 'Rule-based checks')}
       {checks?.ai_review && (
         <div style={{ marginTop: '12px' }}>

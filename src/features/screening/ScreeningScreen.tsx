@@ -21,7 +21,7 @@ function ScreenedRecords() {
       <ul style={{ listStyle: 'none', padding: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
         {screened.map(paper => (
           <li key={paper.id} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <span style={chip(paper.user_decision === 'Include' ? GREEN : paper.user_decision === 'Exclude' ? RED : '#f59e0b')}>{paper.user_decision}</span>
+            <span style={chip(paper.user_decision === 'Include' ? GREEN : paper.user_decision === 'Exclude' ? RED : '#9A5B00')}>{paper.user_decision}</span>
             {paper.title}
           </li>
         ))}

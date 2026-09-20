@@ -239,7 +239,7 @@ export function ExtractionScreen() {
           <div style={panel}>
             <div style={{ ...row, justifyContent: 'space-between' }}>
               <strong>{data.study.label}</strong>
-              <div style={row}>{data.study.registry_ids.map(id => <span key={id} style={chip('#3b82f6')}>{id}</span>)}</div>
+              <div style={row}>{data.study.registry_ids.map(id => <span key={id} style={chip('#1E5FCC')}>{id}</span>)}</div>
             </div>
             <ul style={{ margin: '6px 0', paddingLeft: '20px', fontSize: '0.9rem' }}>
               {data.study.reports.map(report => (

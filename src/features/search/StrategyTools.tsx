@@ -21,8 +21,8 @@ export function Tool({ title, children }: { title: string; children: ReactNode }
 function Messages({ errors = [], warnings = [] }: { errors?: string[]; warnings?: string[] }) {
   return (
     <ul style={{ margin: '6px 0', paddingLeft: '18px', fontSize: '0.85rem' }}>
-      {errors.map(error => <li key={error} style={{ color: '#ef4444' }}>{error}</li>)}
-      {warnings.map(warning => <li key={warning} style={{ color: '#f59e0b' }}>{warning}</li>)}
+      {errors.map(error => <li key={error} style={{ color: '#C62828' }}>{error}</li>)}
+      {warnings.map(warning => <li key={warning} style={{ color: '#9A5B00' }}>{warning}</li>)}
     </ul>
   );
 }
@@ -46,7 +46,7 @@ export function SyntaxCheck({ projectId, query, syntax }: { projectId: number; q
       <button className="btn-glass" style={small} onClick={check}>Check syntax</button>
       {notice && <p role="status">{notice}</p>}
       {result && (result.valid && result.warnings.length === 0
-        ? <p style={{ color: '#10b981', fontSize: '0.85rem' }}>No syntax problems found{result.term_count ? ` (${result.term_count} terms)` : ''}.</p>
+        ? <p style={{ color: '#137A47', fontSize: '0.85rem' }}>No syntax problems found{result.term_count ? ` (${result.term_count} terms)` : ''}.</p>
         : <Messages errors={result.errors} warnings={result.warnings} />)}
     </div>
   );
@@ -98,7 +98,7 @@ export function TranslatePanel({ projectId, strategyId, catalog, locked, onAdded
       {notice && <p role="status" style={{ fontSize: '0.85rem' }}>{notice}</p>}
       {translation && (
         <div style={{ marginTop: '8px' }}>
-          <pre style={{ whiteSpace: 'pre-wrap', background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '6px', fontSize: '0.85rem' }}>{translation.query}</pre>
+          <pre style={{ whiteSpace: 'pre-wrap', background: 'var(--surface-muted)', padding: '8px', borderRadius: '6px', fontSize: '0.85rem' }}>{translation.query}</pre>
           <Messages warnings={translation.warnings} />
           <label style={labelStyle}>Database for the new strategy
             <input className="search-input" value={database} onChange={e => setDatabase(e.target.value)} />
@@ -196,7 +196,7 @@ export function RecallCheckPanel({ projectId, strategyId }: { projectId: number;
         <div key={check.id} style={{ fontSize: '0.85rem', marginTop: '8px' }}>
           Version {check.strategy_version} on {check.connector}: found {check.found.length} of {check.seeds.length}
           {check.recall !== null && ` (${Math.round(check.recall * 100)}%)`}
-          {check.missed.length > 0 && <div style={{ color: '#f59e0b' }}>Missed: {check.missed.join(', ')}</div>}
+          {check.missed.length > 0 && <div style={{ color: '#9A5B00' }}>Missed: {check.missed.join(', ')}</div>}
         </div>
       ))}
     </div>

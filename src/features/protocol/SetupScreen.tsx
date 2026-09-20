@@ -34,12 +34,12 @@ function AiModelPicker() {
         {selected?.data_location && ` Review content is sent to ${selected.data_location}.`}
       </p>
       {!offered && (
-        <p role="alert" style={{ fontSize: '0.85rem', color: '#ef4444' }}>
+        <p role="alert" style={{ fontSize: '0.85rem', color: '#C62828' }}>
           {modelDisplayName(pinned)} is no longer offered. Choose another model before running AI steps.
         </p>
       )}
       {selected?.available === false && (
-        <p role="alert" style={{ fontSize: '0.85rem', color: '#f59e0b' }}>
+        <p role="alert" style={{ fontSize: '0.85rem', color: '#9A5B00' }}>
           No {selected.provider_label} API key is available to you. <Link to="/settings">Add your own key in Settings</Link> or choose another model.
         </p>
       )}

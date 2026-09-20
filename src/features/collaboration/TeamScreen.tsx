@@ -243,7 +243,7 @@ export function TeamScreen() {
           </div>
           <p style={{ margin: '6px 0 0 0' }}>{item.deleted ? <em style={muted}>deleted</em> : item.body}</p>
           {data.comments.filter(reply => reply.parent_id === item.id).map(reply => (
-            <p key={reply.id} style={{ margin: '6px 0 0 16px', borderLeft: '2px solid rgba(255,255,255,0.1)', paddingLeft: '8px' }}>
+            <p key={reply.id} style={{ margin: '6px 0 0 16px', borderLeft: '2px solid var(--border)', paddingLeft: '8px' }}>
               <strong>{reply.author ?? 'Former member'}:</strong> {reply.deleted ? <em style={muted}>deleted</em> : reply.body}
             </p>
           ))}
@@ -260,7 +260,7 @@ export function TeamScreen() {
           </thead>
           <tbody>
             {data.workload.map(item => (
-              <tr key={item.user_id} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+              <tr key={item.user_id} style={{ borderTop: '1px solid var(--border)' }}>
                 <td>{item.name}</td>
                 <td>{item.title_abstract_decisions}</td>
                 <td>{item.full_text_decisions}</td>

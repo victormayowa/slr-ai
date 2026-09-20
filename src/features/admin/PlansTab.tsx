@@ -96,7 +96,7 @@ export function PlansTab() {
           {editing?.id === plan.id && (
             <label style={{ ...fieldLabel, marginTop: '8px' }}>
               Plan settings (JSON)
-              <textarea aria-label={`Settings for ${plan.name}`} className="search-input" rows={18} style={{ fontFamily: 'ui-monospace, monospace', fontSize: '0.8rem' }} value={editing.json} onChange={e => setEditing({ id: plan.id, json: e.target.value })} />
+              <textarea aria-label={`Settings for ${plan.name}`} className="search-input" rows={18} style={{ fontFamily: 'var(--mono)', fontSize: '0.8rem' }} value={editing.json} onChange={e => setEditing({ id: plan.id, json: e.target.value })} />
               <button className="btn-primary" style={{ alignSelf: 'flex-start' }} disabled={busy} onClick={() => save(plan)}>Save plan</button>
             </label>
           )}

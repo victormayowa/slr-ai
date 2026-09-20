@@ -8,8 +8,8 @@ import {
 import { useAuth } from '../../auth/authContext';
 import { useWorkspace } from '../project/workspaceContext';
 
-const panel = { background: 'rgba(0,0,0,0.25)', borderRadius: '12px', padding: '16px' } as const;
-const FEASIBILITY_COLORS = { likely: '#10b981', possible: '#f59e0b', unlikely: '#ef4444', unknown: 'var(--text-secondary)' } as const;
+const panel = { background: 'var(--surface-muted)', borderRadius: '12px', padding: '16px' } as const;
+const FEASIBILITY_COLORS = { likely: '#137A47', possible: '#9A5B00', unlikely: '#C62828', unknown: 'var(--text-secondary)' } as const;
 
 const ASSUMPTION_FIELDS: { key: keyof WorkloadAssumptions; label: string; step: number }[] = [
   { key: 'reviewers', label: 'Reviewers screening each record', step: 1 },
@@ -166,7 +166,7 @@ export function TopicScreen() {
             <h4 style={{ marginTop: 0 }}>How much is published</h4>
             <ul style={{ margin: 0, paddingLeft: '20px' }}>
               {Object.entries(results.sources).map(([key, source]) => (
-                <li key={key}>{source.label}: {source.error ? <span style={{ color: '#ef4444' }}>{source.error}</span> : source.count?.toLocaleString()}</li>
+                <li key={key}>{source.label}: {source.error ? <span style={{ color: '#C62828' }}>{source.error}</span> : source.count?.toLocaleString()}</li>
               ))}
             </ul>
             <YearChart counts={results.publications_by_year} />
@@ -174,7 +174,7 @@ export function TopicScreen() {
 
           <div style={panel}>
             <h4 style={{ marginTop: 0 }}>Existing reviews</h4>
-            {results.review_errors.map(error => <p key={error} style={{ color: '#ef4444' }}>{error}</p>)}
+            {results.review_errors.map(error => <p key={error} style={{ color: '#C62828' }}>{error}</p>)}
             {results.existing_reviews.length === 0 ? (
               <p>No reviews were found in these searches. That doesn't prove none exist; search PROSPERO and the Cochrane Library too.</p>
             ) : (
@@ -184,7 +184,7 @@ export function TopicScreen() {
                     <a href={review.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-primary)' }}>{review.title}</a>
                     <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}> · {review.year} · {review.venue || review.source}</span>
                     {review.possibly_outdated && (
-                      <span style={{ marginLeft: '8px', color: '#f59e0b', fontSize: '0.8rem' }}>
+                      <span style={{ marginLeft: '8px', color: '#9A5B00', fontSize: '0.8rem' }}>
                         Possibly outdated: {review.newer_randomized_trials} newer randomized trial{review.newer_randomized_trials === 1 ? '' : 's'} in PubMed
                       </span>
                     )}
@@ -196,7 +196,7 @@ export function TopicScreen() {
 
           <div style={panel}>
             <h4 style={{ marginTop: 0 }}>Registered protocols</h4>
-            {results.registration_error && <p style={{ color: '#ef4444' }}>{results.registration_error}</p>}
+            {results.registration_error && <p style={{ color: '#C62828' }}>{results.registration_error}</p>}
             {results.registrations.length === 0 ? <p>No OSF registrations with these words in the title.</p> : (
               <ul style={{ margin: 0, paddingLeft: '20px' }}>
                 {results.registrations.map(registration => (
@@ -247,7 +247,7 @@ export function TopicScreen() {
                   ))}
                 </ol>
                 {exploration.ai_questions.content.evidence_limitations && (
-                  <p style={{ fontSize: '0.85rem', color: '#f59e0b' }}>Limitations: {exploration.ai_questions.content.evidence_limitations}</p>
+                  <p style={{ fontSize: '0.85rem', color: '#9A5B00' }}>Limitations: {exploration.ai_questions.content.evidence_limitations}</p>
                 )}
               </>
             )}

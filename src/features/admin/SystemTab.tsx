@@ -10,7 +10,7 @@ function CheckList({ checks }: { checks: HealthCheck[] }) {
   return (
     <div>
       {checks.map(check => (
-        <div key={check.name} style={{ ...row, fontSize: '0.85rem', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+        <div key={check.name} style={{ ...row, fontSize: '0.85rem', padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
           <span style={chip(COLORS[check.status])}>{check.status === 'ok' ? 'pass' : check.status}</span>
           <strong style={{ minWidth: '160px' }}>{check.name.replace(/_/g, ' ')}</strong>
           <span style={muted}>{check.detail}</span>

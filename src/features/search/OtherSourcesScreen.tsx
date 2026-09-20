@@ -5,7 +5,7 @@ import { useAuth } from '../../auth/authContext';
 import { WorkspaceStageGate } from '../project/WorkspaceStageGate';
 import { useWorkspace } from '../project/workspaceContext';
 
-const panel = { background: 'rgba(0,0,0,0.25)', borderRadius: '12px', padding: '20px' } as const;
+const panel = { background: 'var(--surface-muted)', borderRadius: '12px', padding: '20px' } as const;
 const labelStyle = { display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)' } as const;
 const today = () => new Date().toISOString().slice(0, 10);
 

@@ -109,7 +109,7 @@ export function PublicationScreen() {
         <table style={{ width: '100%', fontSize: '0.8rem', borderCollapse: 'collapse' }}>
           <tbody>
             {journals.candidates.slice(0, 25).map(journal => (
-              <tr key={journal.id} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+              <tr key={journal.id} style={{ borderTop: '1px solid var(--border)' }}>
                 <td style={{ padding: '6px' }}>
                   <strong>{journal.name}</strong>
                   <div style={muted}>{journal.publisher} {journal.issns.join(', ')}</div>
@@ -409,7 +409,7 @@ function CommentEditor({ base, comment, busy, act }: { base: string; comment: Re
   const [response, setResponse] = useState(comment.response);
   const [status, setStatus] = useState(comment.status);
   return (
-    <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', padding: '8px 0' }}>
+    <div style={{ borderTop: '1px solid var(--border)', padding: '8px 0' }}>
       <div style={{ fontSize: '0.85rem' }}>
         <strong>
           {comment.reviewer} {comment.number}

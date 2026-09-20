@@ -175,7 +175,7 @@ export function GovernanceScreen() {
           </thead>
           <tbody>
             {data.sop.stages.map(stage => (
-              <tr key={stage.stage} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+              <tr key={stage.stage} style={{ borderTop: '1px solid var(--border)' }}>
                 <td>{stage.label}</td>
                 <td>{stage.completed_at ? new Date(stage.completed_at).toLocaleDateString() : <span style={muted}>open</span>}</td>
                 <td>{stage.completed_by ?? '–'}</td>

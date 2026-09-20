@@ -123,19 +123,19 @@ export function LoginPage() {
   };
 
   return (
-    <div className="app-container" style={{ justifyContent: 'center', alignItems: 'center', flexDirection: 'column', minHeight: '100vh', background: 'radial-gradient(circle at 50% 50%, #1e1e2f 0%, #0f0f17 100%)' }}>
+    <div className="app-container" style={{ justifyContent: 'center', alignItems: 'center', flexDirection: 'column', minHeight: '100vh', background: 'var(--lab)' }}>
       <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-        <div style={{ width: '64px', height: '64px', borderRadius: '16px', background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '2rem', margin: '0 auto 16px', boxShadow: '0 8px 24px rgba(59,130,246,0.3)' }}>O</div>
-        <h1 style={{ fontSize: '2rem', margin: 0, fontWeight: 700, letterSpacing: '-0.5px' }}>OmniReview AI</h1>
+        <h1 style={{ fontSize: '2.25rem', margin: 0, fontWeight: 800 }}>OmniReview</h1>
+        <p className="eyebrow" style={{ marginTop: '6px' }}>Systematic reviews, from question to publication</p>
       </div>
-      <div className="glass-panel animate-fade-in" style={{ width: '100%', maxWidth: '400px', padding: '40px', border: '1px solid rgba(255,255,255,0.1)' }}>
+      <div className="glass-panel animate-fade-in" style={{ width: '100%', maxWidth: '400px', padding: '40px', border: '1px solid var(--border)' }}>
         {authError && (
-          <div role="alert" style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', padding: '12px', borderRadius: '8px', marginBottom: '24px', fontSize: '0.9rem', textAlign: 'center', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+          <div role="alert" style={{ background: 'rgba(198, 40, 40, 0.1)', color: '#C62828', padding: '12px', borderRadius: '8px', marginBottom: '24px', fontSize: '0.9rem', textAlign: 'center', border: '1px solid rgba(198, 40, 40, 0.2)' }}>
             {authError}
           </div>
         )}
         {authNotice && (
-          <div role="status" style={{ background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', padding: '12px', borderRadius: '8px', marginBottom: '24px', fontSize: '0.9rem', textAlign: 'center', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+          <div role="status" style={{ background: 'rgba(19, 122, 71, 0.1)', color: '#137A47', padding: '12px', borderRadius: '8px', marginBottom: '24px', fontSize: '0.9rem', textAlign: 'center', border: '1px solid rgba(19, 122, 71, 0.2)' }}>
             {authNotice}
           </div>
         )}

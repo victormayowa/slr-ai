@@ -16,7 +16,7 @@ import { useAuth } from '../../auth/authContext';
 import { useWorkspace } from '../project/workspaceContext';
 import { PassageViewer } from './PassageViewer';
 
-const panel = { background: 'rgba(0,0,0,0.25)', borderRadius: '12px', padding: '16px 20px' } as const;
+const panel = { background: 'var(--surface-muted)', borderRadius: '12px', padding: '16px 20px' } as const;
 const muted = { color: 'var(--text-secondary)', fontSize: '0.85rem' } as const;
 const smallButton = { padding: '4px 10px', fontSize: '0.8rem' } as const;
 
@@ -208,7 +208,7 @@ export function FullTextScreen() {
             {row.documents.length > 0 && (
               <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {row.documents.map(doc => (
-                  <li key={doc.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '8px' }}>
+                  <li key={doc.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', borderTop: '1px solid var(--border)', paddingTop: '8px' }}>
                     <div style={{ minWidth: 0, flex: '1 1 320px', fontSize: '0.9rem' }}>
                       {doc.role === 'supplement' ? 'Supplement' : 'Full text'}: {doc.file_name}
                       <div style={muted}>

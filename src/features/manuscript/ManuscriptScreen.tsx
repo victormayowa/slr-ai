@@ -215,7 +215,7 @@ export function ManuscriptScreen() {
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 3fr) minmax(0, 2fr)', gap: '16px' }}>
         <div>
           <p style={muted}>{section.guidance}</p>
-          <textarea ref={editor} aria-label={`${section.title} text`} className="search-input" style={{ width: '100%', minHeight: '360px', fontFamily: 'ui-monospace, monospace', fontSize: '0.85rem' }} value={draft} onChange={e => setDraft(e.target.value)} />
+          <textarea ref={editor} aria-label={`${section.title} text`} className="search-input" style={{ width: '100%', minHeight: '360px', fontFamily: 'var(--mono)', fontSize: '0.85rem' }} value={draft} onChange={e => setDraft(e.target.value)} />
           <div style={{ ...row, marginTop: '8px' }}>
             <button className="btn-primary" style={smallButton} disabled={busy || !dirty} onClick={saveSection}>
               Save and verify
@@ -278,7 +278,7 @@ export function ManuscriptScreen() {
             <div style={{ ...panel, maxHeight: '560px', overflowY: 'auto' }}>
               {checks.length === 0 && <p style={muted}>No sentences yet.</p>}
               {checks.map(check => (
-                <div key={`${check.hash}-${check.index}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '6px 0' }}>
+                <div key={`${check.hash}-${check.index}`} style={{ borderBottom: '1px solid var(--border)', padding: '6px 0' }}>
                   <div style={{ fontSize: '0.85rem' }}>{check.text}</div>
                   <div style={row}>
                     <span style={chip(claimColor(check))}>{check.acknowledged ? 'Acknowledged' : CLAIM_LABELS[check.status]}</span>
@@ -507,7 +507,7 @@ function ReferencesPanel({ references, busy, onInsert, onAdd, onCheck, onExport,
         <button className="btn-glass" style={smallButton} onClick={() => onZotero('export')}>Send to Zotero</button>
       </div>
       {references.map(ref => (
-        <div key={ref.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '6px 0', fontSize: '0.85rem' }}>
+        <div key={ref.id} style={{ borderBottom: '1px solid var(--border)', padding: '6px 0', fontSize: '0.85rem' }}>
           <div style={row}>
             <button className="btn-glass" style={smallButton} onClick={() => onInsert(ref.id)}>
               Cite
@@ -536,7 +536,7 @@ function ChecklistEditor({ checklist, busy, onSave, onExport }: { checklist: Man
           {checklist.items.map(item => {
             const change = changes[item.item_id] ?? { status: item.overridden ? item.status : '', location: item.location, note: item.note };
             return (
-              <tr key={item.item_id} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+              <tr key={item.item_id} style={{ borderTop: '1px solid var(--border)' }}>
                 <td style={{ padding: '4px', width: '40px' }}>{item.item_id}</td>
                 <td style={{ padding: '4px' }}>
                   {item.topic}
@@ -579,7 +579,7 @@ function AuthorsEditor({ authors, roles, members, busy, onSave }: { authors: Man
   return (
     <div style={panel}>
       {rows.map((author, index) => (
-        <div key={index} style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '8px 0' }}>
+        <div key={index} style={{ borderBottom: '1px solid var(--border)', padding: '8px 0' }}>
           <div style={row}>
             <select aria-label={`Account for author ${index + 1}`} className="search-input" style={{ width: 'auto' }} value={author.user_id ?? ''} onChange={e => update(index, { user_id: e.target.value ? Number(e.target.value) : null })}>
               <option value="">No OmniReview account</option>

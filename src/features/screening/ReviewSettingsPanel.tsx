@@ -99,9 +99,9 @@ export function ReviewSettingsPanel({ onSaved }: { onSaved?: (settings: ReviewSe
         <p style={muted}>{settings.exclusion_reasons.filter(reason => !screening.custom_exclusion_reasons.some(custom => custom.code === reason.code)).map(reason => reason.label).join(' · ')}</p>
         <div style={row}>
           {screening.custom_exclusion_reasons.map(reason => (
-            <span key={reason.code} style={{ ...muted, border: '1px solid rgba(255,255,255,0.2)', borderRadius: '999px', padding: '2px 10px' }}>
+            <span key={reason.code} style={{ ...muted, border: '1px solid var(--border-strong)', borderRadius: '999px', padding: '2px 10px' }}>
               {reason.label}{' '}
-              <button aria-label={`Remove ${reason.label}`} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }} onClick={() => setScreening({ custom_exclusion_reasons: screening.custom_exclusion_reasons.filter(r => r.code !== reason.code) })}>✕</button>
+              <button aria-label={`Remove ${reason.label}`} style={{ background: 'none', border: 'none', color: '#C62828', cursor: 'pointer' }} onClick={() => setScreening({ custom_exclusion_reasons: screening.custom_exclusion_reasons.filter(r => r.code !== reason.code) })}>✕</button>
             </span>
           ))}
           <input aria-label="New exclusion reason" className="search-input" style={{ maxWidth: '260px' }} placeholder="Add a reason, such as Wrong dose" value={newReason} onChange={e => setNewReason(e.target.value)} />

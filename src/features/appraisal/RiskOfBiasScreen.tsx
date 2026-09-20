@@ -317,7 +317,7 @@ export function RiskOfBiasScreen() {
             const signed = assessment.domain_judgments[domain.key];
             const entry = judgments[domain.key] ?? { judgment: suggestion ?? '', rationale: '' };
             return (
-              <div key={domain.key} style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '12px', marginTop: '12px' }}>
+              <div key={domain.key} style={{ borderTop: '1px solid var(--border)', paddingTop: '12px', marginTop: '12px' }}>
                 <div style={{ ...row, justifyContent: 'space-between' }}>
                   <strong>{domain.label}</strong>
                   <span style={row}>
@@ -355,7 +355,7 @@ export function RiskOfBiasScreen() {
                         {ai && (
                           <p style={{ ...muted, margin: '4px 0 0 16px' }}>
                             AI: <strong>{ai.answer}</strong> — {ai.rationale}
-                            {ai.quote && ` “${ai.quote}”`} {ai.quote && <span style={chip(ai.grounded ? GREEN : '#ef4444')}>{ai.grounded ? 'quote found' : 'quote not found'}</span>}{' '}
+                            {ai.quote && ` “${ai.quote}”`} {ai.quote && <span style={chip(ai.grounded ? GREEN : '#C62828')}>{ai.grounded ? 'quote found' : 'quote not found'}</span>}{' '}
                             {ai.answer !== current && (
                               <button className="btn-glass" style={smallButton} onClick={() => setAnswers(prev => ({ ...prev, [question.id]: { answer: ai.answer, source: 'ai_accepted' } }))}>
                                 Accept
@@ -390,7 +390,7 @@ export function RiskOfBiasScreen() {
               </div>
             );
           })}
-          <div style={{ borderTop: '1px solid rgba(255,255,255,0.2)', paddingTop: '12px', marginTop: '16px' }}>
+          <div style={{ borderTop: '1px solid var(--border-strong)', paddingTop: '12px', marginTop: '16px' }}>
             <strong>Overall judgment</strong>
             {assessment.suggested.overall && <span style={muted}> · the tool suggests {judgmentChip(assessment.suggested.overall)}</span>}
             {assessment.status === 'signed_off' && (
@@ -539,7 +539,7 @@ function ChecklistEditor({ detail, checklist, busy, onSave, onSuggest, onSignOff
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', marginTop: '8px' }}>
         <tbody>
           {items.map(item => (
-            <tr key={item.item_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+            <tr key={item.item_id} style={{ borderBottom: '1px solid var(--border)' }}>
               <td style={{ padding: '6px', width: '48px' }}>{item.item_id}</td>
               <td style={{ padding: '6px' }}>
                 <div>{item.topic}</div>
@@ -548,7 +548,7 @@ function ChecklistEditor({ detail, checklist, busy, onSave, onSuggest, onSignOff
                   <div style={muted}>
                     AI: {STATUS_LABELS[item.ai_status] ?? item.ai_status} — {item.ai_rationale}
                     {item.ai_quote && ` “${item.ai_quote}”`}
-                    {item.ai_quote && <span style={chip(item.ai_grounded ? GREEN : '#ef4444')}>{item.ai_grounded ? 'quote found' : 'quote not found'}</span>}
+                    {item.ai_quote && <span style={chip(item.ai_grounded ? GREEN : '#C62828')}>{item.ai_grounded ? 'quote found' : 'quote not found'}</span>}
                   </div>
                 )}
               </td>

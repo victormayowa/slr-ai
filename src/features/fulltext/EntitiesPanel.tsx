@@ -99,7 +99,7 @@ export function EntitiesPanel({ documentId, spans }: { documentId: number; spans
       {notice && <p role="status" style={muted}>{notice}</p>}
       <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {entities.map(entity => (
-          <li key={entity.id} style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '8px' }}>
+          <li key={entity.id} style={{ borderTop: '1px solid var(--border)', paddingTop: '8px' }}>
             <div style={row}>
               <strong>{entity.text}</strong>
               <span style={muted}>{entity.entity_type}{sectionOf(entity.span_id) && ` · ${sectionOf(entity.span_id)}`}</span>

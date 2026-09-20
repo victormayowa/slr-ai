@@ -77,7 +77,7 @@ export function PrivacyPanel() {
             <div style={row}>
               <input aria-label="Password to delete your account" type="password" className="search-input" style={{ width: '180px' }} placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} />
               <input aria-label="Type delete my account" className="search-input" style={{ width: '200px' }} placeholder={`Type "${CONFIRMATION}"`} value={confirmation} onChange={e => setConfirmation(e.target.value)} />
-              <button className="btn-glass" style={{ ...smallButton, borderColor: '#ef4444', color: '#ef4444' }} disabled={busy || !password || confirmation.trim().toLowerCase() !== CONFIRMATION} onClick={() => act(async () => {
+              <button className="btn-glass" style={{ ...smallButton, borderColor: '#C62828', color: '#C62828' }} disabled={busy || !password || confirmation.trim().toLowerCase() !== CONFIRMATION} onClick={() => act(async () => {
                 await apiRequest('POST', '/api/me/deletion', { password, confirmation });
                 setPassword('');
                 setConfirmation('');

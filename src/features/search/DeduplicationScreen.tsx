@@ -85,8 +85,8 @@ function CandidatePairs({ version }: { version: number }) {
       ) : (
         <ul aria-label="Possible duplicates to review" style={{ listStyle: 'none', padding: 0, display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {pairs.map(pair => (
-            <li key={`${pair.record.id}-${pair.other.id}`} style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '12px', padding: '16px' }}>
-              <div style={{ color: '#f59e0b', fontSize: '0.85rem' }}>{pair.reasons.join(' · ')}</div>
+            <li key={`${pair.record.id}-${pair.other.id}`} style={{ background: 'var(--surface-muted)', borderRadius: '12px', padding: '16px' }}>
+              <div style={{ color: '#9A5B00', fontSize: '0.85rem' }}>{pair.reasons.join(' · ')}</div>
               <RecordSummary record={pair.record} />
               <RecordSummary record={pair.other} />
               <PairActions first={pair.record} second={pair.other} busy={busy} onDuplicate={(keep) => decide(pair, 'duplicate', keep)} onDistinct={() => decide(pair, 'not_duplicate')} />
@@ -116,12 +116,12 @@ export function DeduplicationScreen() {
         {dedupLoading ? 'Checking identifiers and titles…' : 'Run automatic deduplication'}
       </button>
       {prisma !== null && prisma.duplicates_removed > 0 && (
-        <div style={{ marginTop: '24px', color: '#10b981', fontSize: '1.1rem' }}>✓ {prisma.duplicates_removed} duplicates set aside.</div>
+        <div style={{ marginTop: '24px', color: '#137A47', fontSize: '1.1rem' }}>✓ {prisma.duplicates_removed} duplicates set aside.</div>
       )}
 
       <CandidatePairs version={dedupVersion} />
 
-      <div style={{ marginTop: '40px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '24px' }}>
+      <div style={{ marginTop: '40px', borderTop: '1px solid var(--border)', paddingTop: '24px' }}>
         <h4 style={{ margin: '0 0 8px', color: 'var(--text-primary)' }}>Possible duplicates by meaning</h4>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: 0 }}>
           Finds records whose titles and abstracts say nearly the same thing even when the titles differ, such as one study
@@ -139,8 +139,8 @@ export function DeduplicationScreen() {
         {similar && similar.pairs.length > 0 && (
           <ul aria-label="Possible duplicate pairs by meaning" style={{ listStyle: 'none', padding: 0, marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {similar.pairs.map(pair => (
-              <li key={`${pair.record.id}-${pair.other.id}`} style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '12px', padding: '16px' }}>
-                <div style={{ color: '#f59e0b', fontSize: '0.85rem' }}>{Math.round(pair.similarity * 100)}% similar in meaning</div>
+              <li key={`${pair.record.id}-${pair.other.id}`} style={{ background: 'var(--surface-muted)', borderRadius: '12px', padding: '16px' }}>
+                <div style={{ color: '#9A5B00', fontSize: '0.85rem' }}>{Math.round(pair.similarity * 100)}% similar in meaning</div>
                 <RecordSummary record={pair.record} />
                 <RecordSummary record={pair.other} />
                 <PairActions first={pair.record} second={pair.other} busy={similarLoading} onDuplicate={(keep, duplicate) => handleMarkDuplicate(duplicate.id, keep.id)} />

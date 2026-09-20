@@ -5,7 +5,7 @@ import { useAuth } from '../../auth/authContext';
 import { AMBER, GREEN, RED, chip, fieldLabel, muted, panel, row, smallButton } from '../../components/ui';
 import { useWorkspace } from '../project/workspaceContext';
 
-const STATUS_COLOR = { draft: '#9ca3af', sent: AMBER, replied: GREEN, no_response: RED, closed: '#9ca3af' } as const;
+const STATUS_COLOR = { draft: '#5A6478', sent: AMBER, replied: GREEN, no_response: RED, closed: '#5A6478' } as const;
 
 // Requests to a study's authors for missing data, with a drafted request and a log of the correspondence.
 export function AuthorContacts({ studyId, fields }: { studyId: number; fields: FieldDef[] }) {
@@ -75,7 +75,7 @@ export function AuthorContacts({ studyId, fields }: { studyId: number; fields: F
       <h4 style={{ marginTop: 0 }}>Contacting authors</h4>
       {notice && <p role="status" style={muted}>{notice}</p>}
       {contacts.map(contact => (
-        <div key={contact.id} style={{ borderTop: '1px solid rgba(255,255,255,0.08)', padding: '8px 0' }}>
+        <div key={contact.id} style={{ borderTop: '1px solid var(--border)', padding: '8px 0' }}>
           <div style={row}>
             <strong>{contact.contact_name}</strong> <span style={muted}>{contact.email}</span>
             <span style={chip(STATUS_COLOR[contact.status])}>{contact.status.replace('_', ' ')}</span>
