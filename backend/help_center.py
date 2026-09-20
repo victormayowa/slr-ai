@@ -10,7 +10,8 @@ from pathlib import Path
 
 from active_learning import tokens
 
-DOCS_DIR = Path(os.getenv("HELP_DOCS_DIR", str(Path(__file__).resolve().parent.parent / "docs")))
+# A blank HELP_DOCS_DIR (as in .env.example) means the repository's docs folder.
+DOCS_DIR = Path(os.getenv("HELP_DOCS_DIR") or Path(__file__).resolve().parent.parent / "docs")
 # Internal planning documents aren't product documentation.
 EXCLUDED = {"roadmap.md"}
 MIN_SCORE = 1.0

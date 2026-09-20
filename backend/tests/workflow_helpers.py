@@ -4,8 +4,8 @@
 class ProviderHTTPError(Exception):
     """Stands in for an AI SDK error carrying an HTTP status. Its text includes a fake secret that must never leak."""
 
-    def __init__(self, status_code: int):
-        super().__init__(f"HTTP {status_code}: request with key sk-secret-123 failed")
+    def __init__(self, status_code: int, reason: str = ""):
+        super().__init__(f"HTTP {status_code}: request with key sk-secret-123 failed. {reason}".strip())
         self.status_code = status_code
 
 

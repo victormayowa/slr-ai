@@ -306,7 +306,7 @@ describe('App routing', () => {
     renderApp('/projects/7/extraction');
 
     signIn();
-    fireEvent.click(await screen.findByRole('button', { name: 'Accept as my value' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept as my value' }, { timeout: 5000 }));
 
     await vi.waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true));
     const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');

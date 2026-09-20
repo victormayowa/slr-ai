@@ -184,8 +184,23 @@ def status_code(exc: BaseException) -> int | None:
     return None
 
 
+# Phrases providers use when the account behind a key has no credit or has used up its quota (Anthropic answers 400,
+# OpenAI and Gemini 429). Only matched, never shown: provider response bodies can echo keys or prompts.
+_OUT_OF_CREDIT_PHRASES = ("credit balance", "insufficient_quota", "exceeded your current quota", "billing")
+
+
+def is_out_of_credit(exc: BaseException) -> bool:
+    """The key works, but its provider account can't pay for requests. Retrying won't help."""
+    if status_code(exc) not in (400, 402, 403, 429):
+        return False
+    text = str(exc).lower()
+    return any(phrase in text for phrase in _OUT_OF_CREDIT_PHRASES)
+
+
 def is_retryable(exc: BaseException) -> bool:
     """Rate limits, overload, server errors, timeouts, and dropped connections are worth retrying."""
+    if is_out_of_credit(exc):
+        return False
     if isinstance(exc, TimeoutError | httpx.TransportError | anthropic.APIConnectionError | openai.APIConnectionError):
         return True
     code = status_code(exc)
@@ -195,12 +210,22 @@ def is_retryable(exc: BaseException) -> bool:
 def safe_error_message(spec: ProviderSpec, model: str, exc: BaseException) -> str:
     """A message for users that never includes provider response bodies, which can echo keys or prompts."""
     code = status_code(exc)
+    if is_out_of_credit(exc):
+        return (
+            f"{spec.label} accepted the key, but the account it belongs to has no credit or has used its quota. Add "
+            f"credit or check billing with {spec.label}."
+        )
     if code in (401, 403):
         return f"{spec.label} rejected the API key. Check the key in Settings or the server configuration."
     if code == 404:
         return f'{spec.label} does not recognise the model "{model}". Choose another model for this project.'
     if code == 429:
         return f"{spec.label} is rate limiting requests. Wait a moment and try again."
+    if code in (503, 529):
+        return (
+            f'{spec.label}\'s model "{model}" is overloaded right now. Try again in a few minutes, or choose another '
+            "model for this project in Project Setup."
+        )
     if is_retryable(exc):
         return f"{spec.label} is unavailable right now. Try again shortly."
     if code == 400:
