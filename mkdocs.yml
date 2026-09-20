@@ -16,6 +16,7 @@ nav:
   - AI governance: ai-governance.md
   - Import and export: import-export.md
   - API and webhooks: api.md
+  - Your keys and storage: your-keys-and-storage.md
   - Plans, billing, and your account: billing-and-accounts.md
   - Operators:
       - Production readiness: production-readiness.md

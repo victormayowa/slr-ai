@@ -11,8 +11,9 @@ Plans limit:
 - **Members in a project.** Invitations count when they are sent.
 - **Records added each month** by searches and imports.
 - **AI credits each month.** One credit is 1,000 tokens used with the server's AI keys. Work done with your own API key
-  (saved under Settings) never uses credits.
-- **Stored documents** (full texts, uploads, and plots), in MB.
+  (saved under Settings) never uses credits, and you can choose to use only your own keys.
+- **Stored documents** (full texts, uploads, and plots), in MB. Files kept in your own storage bucket don't count; see
+  [Your own AI keys and your own storage](your-keys-and-storage.md).
 - **Active surveillance schedules** for living reviews.
 - **Analysis compute** each month, in minutes of R run time.
 - **API access** with personal tokens, and **webhooks**, which are on some plans only.

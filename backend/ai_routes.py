@@ -14,12 +14,12 @@ from sqlalchemy.orm import Session
 
 import crypto
 import models
-from ai_access import api_key_context, decrypt_user_key
+from ai_access import AI_KEY_MODES, api_key_context, decrypt_user_key, key_available
 from ai_catalog import ai_model_out, catalog_models
 from auth_routes import get_current_user
 from database import get_db
 from llm import adapters
-from llm.providers import PROVIDERS, ProviderSpec
+from llm.providers import PROVIDERS, ProviderSpec, platform_keys_enabled
 from rate_limiting import ai_rate_limit
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["ai"])
 
 KEY_TEST_TIMEOUT_SECONDS = 30
+
+
+class AIPreferencesUpdate(BaseModel):
+    ai_key_mode: Literal["auto", "own", "platform"]
 
 
 class APIKeyUpdate(BaseModel):
@@ -63,6 +67,7 @@ def list_providers(user: models.User = Depends(get_current_user), db: Session = 
             "label": spec.label,
             "data_location": spec.headquarters,
             "platform_key_configured": spec.platform_api_key() is not None,
+            "own_key_required": not platform_keys_enabled(),
             "user_key": _key_out(saved[spec.id]) if spec.id in saved else None,
         }
         for spec in PROVIDERS.values()
@@ -75,15 +80,38 @@ def list_models(
     user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Enabled catalog models. `available` says whether the caller has a key (their own or the server's) to use it."""
+    """Enabled catalog models. `available` says whether the caller has a key to use it, given their key choice."""
     saved = _saved_keys(db, user)
     return [
         {
             **ai_model_out(model),
-            "available": model.provider in saved or PROVIDERS[model.provider].platform_api_key() is not None,
+            "available": key_available(saved, model.provider, user),
         }
         for model in catalog_models(db, purpose)
     ]
+
+
+def _preferences_out(user: models.User) -> dict:
+    return {
+        "ai_key_mode": user.ai_key_mode if user.ai_key_mode in AI_KEY_MODES else "auto",
+        # False when AI_PLATFORM_KEYS=false: the server has no keys of its own to offer, whatever the choice.
+        "platform_keys_enabled": platform_keys_enabled(),
+    }
+
+
+@router.get("/me/ai-preferences")
+def get_ai_preferences(user: models.User = Depends(get_current_user)):
+    return _preferences_out(user)
+
+
+@router.put("/me/ai-preferences")
+def update_ai_preferences(
+    body: AIPreferencesUpdate, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """Which keys AI tasks the user starts run on. Applies to their future AI tasks in every project."""
+    user.ai_key_mode = body.ai_key_mode
+    db.commit()
+    return _preferences_out(user)
 
 
 @router.get("/me/api-keys")
@@ -163,7 +191,7 @@ async def test_api_key(provider: str, user: models.User = Depends(get_current_us
         logger.info("Testing a saved %s key for user %s failed", spec.id, user.id, exc_info=True)
         code = adapters.status_code(exc)
         return {
-            "valid": False if code in (401, 403) else None,
+            "valid": False if code in (401, 403) and not adapters.is_out_of_credit(exc) else None,
             "message": adapters.safe_error_message(spec, model_id, exc),
             "key": _key_out(row),
         }

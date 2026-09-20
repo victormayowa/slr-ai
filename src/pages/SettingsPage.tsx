@@ -6,16 +6,23 @@ import { LegalLinks } from '../components/LegalLinks';
 import { ApiKeysPanel } from '../features/settings/ApiKeysPanel';
 import { PrivacyPanel } from '../features/settings/PrivacyPanel';
 import { SecurityPanel } from '../features/settings/SecurityPanel';
+import { StoragePanel } from '../features/settings/StoragePanel';
 import { TokensPanel } from '../features/settings/TokensPanel';
 
 export function SettingsPage() {
   const { apiRequest, userName } = useAuth();
   const navigate = useNavigate();
   const [plan, setPlan] = useState<string | null>(null);
+  const [userId, setUserId] = useState<number | null>(null);
   const name = userName ?? '';
 
   useEffect(() => {
     let cancelled = false;
+    apiRequest('GET', '/api/auth/me')
+      .then((me: { id: number }) => {
+        if (!cancelled) setUserId(me.id);
+      })
+      .catch(() => undefined);
     apiRequest('GET', '/api/billing/accounts')
       .then((accounts: BillingAccountSummary[]) => {
         if (!cancelled) setPlan(accounts.find(account => account.kind === 'user')?.plan ?? null);
@@ -34,9 +41,9 @@ export function SettingsPage() {
       <div style={{ textAlign: 'center', marginBottom: '32px' }}>
         <h1 style={{ fontSize: '2.5rem', margin: 0 }}>Account Settings</h1>
       </div>
-      <div className="glass-panel" style={{ width: '100%', maxWidth: '720px', padding: '40px', border: '1px solid rgba(255,255,255,0.05)' }}>
+      <div className="glass-panel" style={{ width: '100%', maxWidth: '720px', padding: '40px', border: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginBottom: '40px' }}>
-          <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2.5rem', fontWeight: 'bold', boxShadow: '0 4px 12px rgba(59,130,246,0.3)' }}>
+          <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'var(--gold)', color: 'var(--navy)', fontFamily: 'var(--sans)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2.5rem', fontWeight: 'bold' }}>
             {name.charAt(0).toUpperCase()}
           </div>
           <div>
@@ -53,6 +60,8 @@ export function SettingsPage() {
         </p>
 
         <ApiKeysPanel />
+
+        {userId !== null && <StoragePanel kind="user" accountId={userId} />}
 
         <SecurityPanel />
 

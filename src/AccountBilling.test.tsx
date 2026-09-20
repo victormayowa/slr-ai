@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
@@ -17,7 +17,7 @@ const plan = (code: string, name: string, monthly: number | null, projects: numb
   limits: { projects, members_per_project: 5, records_per_month: 2000, ai_credits_per_month: 200, storage_mb: 500, living_schedules: 0, compute_minutes_per_month: 30, api_access: code !== 'free', webhooks: false },
   online_intervals: [],
 });
-const CONFIG = { enabled: true, provider: 'dev', provider_label: 'Simulated payments (development)', checkout_available: true, limit_labels: LIMIT_LABELS, feature_labels: { api_access: 'API access with personal tokens', webhooks: 'webhooks' } };
+const CONFIG = { enabled: true, provider: 'dev', provider_label: 'Simulated payments (development)', checkout_available: true, limit_labels: LIMIT_LABELS, feature_labels: { api_access: 'API access with personal tokens', webhooks: 'webhooks' }, platform_ai_keys: true };
 const PLANS = { ...CONFIG, plans: [plan('free', 'Free', 0, 1), plan('researcher', 'Researcher', 2900, 5), plan('institution', 'Institution', null, null)] };
 
 function mockApi(routes: Record<string, unknown>) {
@@ -141,6 +141,15 @@ describe('Accounts and billing', () => {
     expect(screen.getByText('$29 / month')).toBeTruthy();
     expect(screen.getByText('Contact us')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Create an account' }).length).toBeGreaterThan(0);
+  });
+
+  it('leaves AI credits off the plans when the server uses only users\' own AI keys', async () => {
+    mockApi({ 'GET /api/billing/plans': { ...PLANS, platform_ai_keys: false } });
+    renderApp('/pricing');
+
+    const researcher = await screen.findByRole('region', { name: 'Researcher plan' });
+    expect(within(researcher).queryByText(/AI credits/)).toBeNull();
+    expect(screen.getByText(/AI features use your own provider API keys/)).toBeTruthy();
   });
 
   it('shows usage against the plan and starts a checkout', async () => {

@@ -8,12 +8,13 @@ measured from what the database already records, rather than from a separate cou
 - records_per_month: records added to the account's projects since the start of the month (searches and imports);
 - ai_credits_per_month: tokens used with the server's API keys this month, 1 credit per 1,000 tokens. Calls made with
   a user's own key never count;
-- storage_mb: stored document files;
+- storage_mb: stored document files kept in OmniReview's storage (files in the account's own bucket don't count);
 - living_schedules: active surveillance schedules;
 - compute_minutes_per_month: time spent running analyses in R this month.
 
-Features (api_access, webhooks) are on or off per plan. Limits are enforced only when BILLING_ENABLED=true, so
-self-hosted and development installations are unlimited by default. A limit of null means unlimited.
+Features (api_access, webhooks, bring_your_own_storage) are on or off per plan. Limits are enforced only when
+BILLING_ENABLED=true, so self-hosted and development installations are unlimited by default.
+A limit of null means unlimited.
 """
 
 import os
@@ -36,7 +37,11 @@ LIMIT_LABELS: dict[str, str] = {
     "living_schedules": "active surveillance schedules",
     "compute_minutes_per_month": "minutes of analysis compute this month",
 }
-FEATURE_LABELS: dict[str, str] = {"api_access": "API access with personal tokens", "webhooks": "webhooks"}
+FEATURE_LABELS: dict[str, str] = {
+    "api_access": "API access with personal tokens",
+    "webhooks": "webhooks",
+    "bring_your_own_storage": "storing files in your own bucket",
+}
 # Usage measured over the calendar month rather than as a total.
 MONTHLY = {"records_per_month", "ai_credits_per_month", "compute_minutes_per_month"}
 # Consumed as work runs, so the check is whether any allowance is left rather than whether an addition fits.
@@ -128,7 +133,7 @@ def _projects_condition(account: Account):
     return and_(models.Project.organization_id.is_(None), models.Project.owner_id == account.id)
 
 
-def _project_ids(account: Account):
+def project_ids(account: Account):
     return select(models.Project.id).where(_projects_condition(account)).scalar_subquery()
 
 
@@ -140,7 +145,7 @@ def usage_of(db: Session, account: Account, limit: str) -> float:
         counts = db.execute(
             select(func.count())
             .select_from(models.ProjectMember)
-            .where(models.ProjectMember.project_id.in_(_project_ids(account)))
+            .where(models.ProjectMember.project_id.in_(project_ids(account)))
             .group_by(models.ProjectMember.project_id)
         ).scalars()
         return max(counts, default=0)
@@ -149,7 +154,7 @@ def usage_of(db: Session, account: Account, limit: str) -> float:
             db.scalar(
                 select(func.count())
                 .select_from(models.Record)
-                .where(models.Record.project_id.in_(_project_ids(account)), models.Record.created_at >= since)
+                .where(models.Record.project_id.in_(project_ids(account)), models.Record.created_at >= since)
             )
             or 0
         )
@@ -163,7 +168,7 @@ def usage_of(db: Session, account: Account, limit: str) -> float:
                     0,
                 )
             ).where(
-                models.AIRun.project_id.in_(_project_ids(account)),
+                models.AIRun.project_id.in_(project_ids(account)),
                 models.AIRun.key_source == "platform",
                 models.AIRun.created_at >= since,
             )
@@ -172,7 +177,8 @@ def usage_of(db: Session, account: Account, limit: str) -> float:
     if limit == "storage_mb":
         size = db.scalar(
             select(func.coalesce(func.sum(models.Document.size_bytes), 0)).where(
-                models.Document.project_id.in_(_project_ids(account))
+                models.Document.project_id.in_(project_ids(account)),
+                models.Document.storage_key.not_like("s3:%"),
             )
         )
         return round(float(size or 0) / _MB, 1)
@@ -182,7 +188,7 @@ def usage_of(db: Session, account: Account, limit: str) -> float:
                 select(func.count())
                 .select_from(models.SurveillanceSchedule)
                 .where(
-                    models.SurveillanceSchedule.project_id.in_(_project_ids(account)),
+                    models.SurveillanceSchedule.project_id.in_(project_ids(account)),
                     models.SurveillanceSchedule.active.is_(True),
                 )
             )
@@ -191,7 +197,7 @@ def usage_of(db: Session, account: Account, limit: str) -> float:
     if limit == "compute_minutes_per_month":
         milliseconds = db.scalar(
             select(func.coalesce(func.sum(models.AnalysisRun.duration_ms), 0)).where(
-                models.AnalysisRun.project_id.in_(_project_ids(account)), models.AnalysisRun.created_at >= since
+                models.AnalysisRun.project_id.in_(project_ids(account)), models.AnalysisRun.created_at >= since
             )
         )
         return round(float(milliseconds or 0) / 60000, 1)
@@ -238,13 +244,19 @@ def require_members(db: Session, project: models.Project, adding: int = 1) -> No
     require(db, account_for_project(project), "members_per_project", adding, current=len(project.members))
 
 
-def require_feature(db: Session, account: Account, feature: str) -> None:
+def feature_allowed(db: Session, account: Account, feature: str) -> bool:
     if not billing_enabled():
+        return True
+    plan = plan_for(db, account)
+    return plan is None or bool(plan.limits.get(feature, False))
+
+
+def require_feature(db: Session, account: Account, feature: str) -> None:
+    if feature_allowed(db, account, feature):
         return
     plan = plan_for(db, account)
-    if plan is None or plan.limits.get(feature, False):
-        return
-    raise LimitReached(f"The {plan.name} plan doesn't include {FEATURE_LABELS[feature]}. Upgrade under Billing.")
+    name = plan.name if plan else "current"
+    raise LimitReached(f"The {name} plan doesn't include {FEATURE_LABELS[feature]}. Upgrade under Billing.")
 
 
 def require_user_feature(db: Session, user: models.User, feature: str) -> None:

@@ -37,6 +37,10 @@ os.environ["BCRYPT_ROUNDS"] = "4"
 os.environ["LLM_BACKOFF_SECONDS"] = "0"
 os.environ["DOCUMENT_STORAGE_DIR"] = tempfile.mkdtemp(prefix="omnireview-test-documents-")
 os.environ["UNPAYWALL_EMAIL"] = "tests@example.org"
+os.environ["BILLING_ENABLED"] = "false"
+os.environ["BILLING_PROVIDER"] = "manual"
+os.environ["AI_PLATFORM_KEYS"] = "true"
+os.environ["ALLOW_PRIVATE_WEBHOOK_URLS"] = "false"
 for provider_spec in PROVIDERS.values():
     os.environ[provider_spec.api_key_env] = ""
 

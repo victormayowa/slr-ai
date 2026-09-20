@@ -5,6 +5,7 @@
 It needs the same environment as the API (DATABASE_URL, REDIS_URL, DATA_ENCRYPTION_KEY, and provider keys).
 """
 
+import asyncio
 import logging
 import os
 from datetime import timedelta
@@ -113,6 +114,20 @@ async def run_due_surveillance(ctx: dict[str, Any]) -> None:
         logger.info("Ran %s surveillance checks", len(runs))
 
 
+def _move_stored_files() -> int:
+    from storage_accounts import move_all_pending
+
+    with SessionLocal() as db:
+        return move_all_pending(db)
+
+
+async def move_stored_files(ctx: dict[str, Any]) -> None:
+    """Every minute: move a batch of files for accounts that asked to move them into or out of their own bucket."""
+    moved = await asyncio.to_thread(_move_stored_files)
+    if moved:
+        logger.info("Moved %s stored file(s)", moved)
+
+
 async def fail_abandoned_jobs(ctx: dict[str, Any]) -> None:
     """Mark jobs still running long after the timeout as failed, for example because their worker was killed."""
     cutoff = models.utcnow() - timedelta(seconds=JOB_TIMEOUT_SECONDS * 2)
@@ -142,6 +157,7 @@ class WorkerSettings:
         cron(send_operations_report, hour={6}, minute={10}),
         cron(carry_out_account_deletions, minute={20}),
         cron(reconcile_subscriptions, hour={2}, minute={40}),
+        cron(move_stored_files, second={30}),
     ]
     on_startup = fail_abandoned_jobs
     queue_name = QUEUE_NAME

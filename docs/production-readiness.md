@@ -108,7 +108,10 @@ docker compose -f docker-compose.prod.yml exec api python -m scripts.production_
 - [ ] A backup has run in the last 26 hours. **[backup]**
 - [ ] A restore drill has succeeded in the last 35 days (run `ops/restore-drill.sh` once by hand now).
   **[restore_drill]**
-- [ ] *Manual.* Keep the restic password and `DATA_ENCRYPTION_KEY` somewhere other than the server.
+- [ ] *Manual.* Keep the restic password and `DATA_ENCRYPTION_KEY` somewhere other than the server. Losing the
+  encryption key also makes saved storage-bucket credentials unreadable.
+- [ ] *Manual.* Note in your support material that files customers keep in their own storage buckets
+  (`docs/your-keys-and-storage.md`) are outside these backups: they back those up themselves.
 - [ ] *Manual.* Rehearse a full restore on a spare server with `ops/restore.sh` before launch, and write down how long
   it took (your recovery time).
 

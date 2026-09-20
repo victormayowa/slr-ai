@@ -54,6 +54,7 @@ from search_quality_routes import vocabulary_router
 from security import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 from services.ai_help import answer_help
 from services.errors import LLMError
+from storage_routes import router as storage_router
 from studies_routes import router as studies_router
 from synthesis_routes import router as synthesis_router
 from tokens_routes import router as tokens_router
@@ -161,6 +162,7 @@ app.include_router(webhook_router)
 app.include_router(tokens_router)
 app.include_router(account_router)
 app.include_router(billing_router)
+app.include_router(storage_router)
 app.include_router(admin_console_router)
 
 

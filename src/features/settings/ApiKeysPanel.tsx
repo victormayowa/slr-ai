@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import type { AiProviderInfo, KeyTestResult } from '../../api/ai';
+import { KEY_MODE_LABELS, type AiPreferences, type AiProviderInfo, type KeyTestResult } from '../../api/ai';
 import { errorMessage } from '../../api/client';
 import { useAuth } from '../../auth/authContext';
 
 type Notice = { tone: 'ok' | 'error' | 'info'; text: string };
 
-const TONE_COLORS: Record<Notice['tone'], string> = { ok: '#10b981', error: '#ef4444', info: 'var(--text-secondary)' };
+const TONE_COLORS: Record<Notice['tone'], string> = { ok: '#137A47', error: '#C62828', info: 'var(--text-secondary)' };
 
 // Lets users add their own key per AI provider. Saved keys are encrypted by the server and never sent back.
 export function ApiKeysPanel() {
@@ -15,9 +15,15 @@ export function ApiKeysPanel() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [notices, setNotices] = useState<Record<string, Notice>>({});
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
+  const [preferences, setPreferences] = useState<AiPreferences | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    apiRequest('GET', '/api/me/ai-preferences')
+      .then(data => {
+        if (!cancelled) setPreferences(data);
+      })
+      .catch(() => undefined);
     apiRequest('GET', '/api/ai/providers')
       .then(data => {
         if (!cancelled) setProviders(data);
@@ -69,27 +75,53 @@ export function ApiKeysPanel() {
       const checked = provider.user_key.last_verified_at ? ', checked' : '';
       return `Your key ending in ${provider.user_key.last_four}${checked}`;
     }
+    if (provider.own_key_required) return 'Your own key is required';
     return provider.platform_key_configured ? 'Using the server key' : 'No key available';
   };
 
   return (
     <section aria-labelledby="api-keys-heading">
-      <h3 id="api-keys-heading" style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px', marginBottom: '16px' }}>AI Provider Keys</h3>
+      <h3 id="api-keys-heading" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '12px', marginBottom: '16px' }}>AI Provider Keys</h3>
       <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-        Add your own key to use a provider this server doesn't offer, or to use your own account and limits. Keys are
-        encrypted on the server, used only for AI tasks you start, and never shown again after saving.
+        {providers?.[0]?.own_key_required
+          ? 'This server runs AI tasks only with your own provider keys. '
+          : "Add your own key to use a provider this server doesn't offer, or to use your own account and limits. "}
+        Keys are encrypted on the server, used only for AI tasks you start, and never shown again after saving.
       </p>
-      {loadError && <p role="alert" style={{ color: '#ef4444' }}>{loadError}</p>}
+      {preferences?.platform_keys_enabled && (
+        <fieldset style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '12px 16px', margin: '0 0 20px' }}>
+          <legend style={{ fontSize: '0.85rem', padding: '0 6px' }}>Which keys your AI tasks use</legend>
+          {KEY_MODE_LABELS.map(mode => (
+            <label key={mode.id} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', padding: '4px 0', fontSize: '0.85rem' }}>
+              <input
+                type="radio"
+                name="ai-key-mode"
+                checked={preferences.ai_key_mode === mode.id}
+                onChange={async () => {
+                  const updated = await apiRequest('PUT', '/api/me/ai-preferences', { ai_key_mode: mode.id });
+                  setPreferences(updated);
+                  setProviders(await apiRequest('GET', '/api/ai/providers'));
+                }}
+              />
+              <span>
+                <strong>{mode.title}</strong>
+                <span style={{ display: 'block', color: 'var(--text-secondary)' }}>{mode.detail}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+      {loadError && <p role="alert" style={{ color: '#C62828' }}>{loadError}</p>}
       {!providers && !loadError && <p style={{ color: 'var(--text-secondary)' }}>Loading providers…</p>}
       {providers?.map(provider => {
         const draft = drafts[provider.id] ?? '';
         const busy = busyProvider === provider.id;
         const notice = notices[provider.id];
         return (
-          <div key={provider.id} role="group" aria-label={provider.label} style={{ padding: '16px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+          <div key={provider.id} role="group" aria-label={provider.label} style={{ padding: '16px 0', borderBottom: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
               <strong>{provider.label}</strong>
-              <span style={{ fontSize: '0.8rem', color: provider.user_key || provider.platform_key_configured ? '#10b981' : 'var(--text-secondary)' }}>{keyStatus(provider)}</span>
+              <span style={{ fontSize: '0.8rem', color: provider.user_key || provider.platform_key_configured ? '#137A47' : 'var(--text-secondary)' }}>{keyStatus(provider)}</span>
             </div>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '4px 0 8px' }}>Review content is processed by {provider.data_location}.</div>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>

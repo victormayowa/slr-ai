@@ -15,6 +15,7 @@ import models
 from auth_routes import get_current_user
 from database import get_db
 from entitlements import Account
+from llm.providers import platform_keys_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ def config_out() -> dict:
         "checkout_available": chosen is not None and chosen.configured() and chosen_id != "manual",
         "limit_labels": entitlements.LIMIT_LABELS,
         "feature_labels": entitlements.FEATURE_LABELS,
+        # False when the server uses only users' own AI keys, so AI credits never apply.
+        "platform_ai_keys": platform_keys_enabled(),
     }
 
 

@@ -1,9 +1,12 @@
 """Chooses the model and API key for each AI call, and records what each call used.
 
-A user's own saved key for the provider is used first, then the server's key for that provider.
+Each user chooses (User.ai_key_mode): "auto" uses their own saved key for the provider first, then the server's key;
+"own" uses only their own keys; "platform" uses only the server's keys, which count against the plan's AI credits.
+AI_PLATFORM_KEYS=false turns the server's keys off for everyone.
 """
 
 import logging
+from collections.abc import Collection
 from decimal import Decimal
 
 from cryptography.exceptions import InvalidTag
@@ -15,13 +18,14 @@ import crypto
 import entitlements
 import models
 from llm.prompts import PromptTemplate
-from llm.providers import PROVIDERS
+from llm.providers import PROVIDERS, platform_keys_enabled
 from llm.runner import AIContext, Usage
 from projects_routes import ProjectAccess
 
 logger = logging.getLogger(__name__)
 
 _MILLION = Decimal(1_000_000)
+AI_KEY_MODES = ("auto", "own", "platform")
 
 
 def api_key_context(user_id: int, provider: str) -> str:
@@ -61,17 +65,40 @@ def resolve_ai(db: Session, model: models.AIModel | None, user: models.User) -> 
         )
 
     prices = {"input_price_per_mtok": model.input_price_per_mtok, "output_price_per_mtok": model.output_price_per_mtok}
-    saved = user_api_key(db, user.id, spec.id)
-    if saved is not None:
-        return AIContext(spec, model.model_id, decrypt_user_key(saved), "user", **prices)
-    platform_key = spec.platform_api_key()
+    mode = user.ai_key_mode if user.ai_key_mode in AI_KEY_MODES else "auto"
+    if mode != "platform":
+        saved = user_api_key(db, user.id, spec.id)
+        if saved is not None:
+            return AIContext(spec, model.model_id, decrypt_user_key(saved), "user", **prices)
+    platform_key = spec.platform_api_key() if mode != "own" else None
     if platform_key is not None:
         return AIContext(spec, model.model_id, platform_key, "platform", **prices)
-    raise HTTPException(
-        status_code=400,
-        detail=f"No {spec.label} API key is available. Add your own key in Settings, or choose a model from a "
-        "provider this server is configured for.",
-    )
+    if not platform_keys_enabled():
+        detail = f"This server uses your own AI provider keys only. Add a {spec.label} key in Settings."
+    elif mode == "own":
+        detail = (
+            f"You chose to use only your own API keys, and you haven't added a {spec.label} key. Add one in "
+            "Settings, or let AI tasks use the plan's included AI."
+        )
+    elif mode == "platform":
+        detail = (
+            f"You chose to use only the plan's included AI, and this server has no {spec.label} key. Choose a model "
+            "from another provider, or allow your own keys in Settings."
+        )
+    else:
+        detail = (
+            f"No {spec.label} API key is available. Add your own key in Settings, or choose a model from a "
+            "provider this server is configured for."
+        )
+    raise HTTPException(status_code=400, detail=detail)
+
+
+def key_available(saved_providers: Collection[str], provider: str, user: models.User) -> bool:
+    """Whether resolve_ai would find a key for the provider, given the user's saved keys and choice."""
+    spec = PROVIDERS[provider]
+    if user.ai_key_mode != "platform" and provider in saved_providers:
+        return True
+    return user.ai_key_mode != "own" and spec.platform_api_key() is not None
 
 
 def project_ai(db: Session, access: ProjectAccess) -> AIContext:

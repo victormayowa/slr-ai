@@ -30,6 +30,7 @@ export type BillingConfig = {
   checkout_available: boolean;
   limit_labels: Record<string, string>;
   feature_labels: Record<string, string>;
+  platform_ai_keys: boolean;
 };
 
 export type PublicPlans = BillingConfig & { plans: PlanInfo[] };
@@ -91,6 +92,10 @@ export const LIMIT_ORDER = [
   'living_schedules',
   'compute_minutes_per_month',
 ] as const;
+
+// The limits worth showing: AI credits only count work on the server's keys, so they're hidden when there are none.
+export const shownLimits = (config: BillingConfig) =>
+  LIMIT_ORDER.filter(limit => limit !== 'ai_credits_per_month' || config.platform_ai_keys !== false);
 
 export const price = (cents: number | null, currency: string) =>
   cents === null ? null : cents === 0 ? 'Free' : new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 0 }).format(cents / 100);

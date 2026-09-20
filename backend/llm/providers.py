@@ -16,6 +16,11 @@ AdapterKind = Literal["anthropic", "gemini", "openai_compatible"]
 EMBEDDING_DIMENSIONS = 1024
 
 
+def platform_keys_enabled() -> bool:
+    """AI_PLATFORM_KEYS=false makes the server bring-your-own-key only: the server's provider keys are never used."""
+    return os.getenv("AI_PLATFORM_KEYS", "true").strip().lower() != "false"
+
+
 @dataclass(frozen=True)
 class ProviderSpec:
     id: str
@@ -36,7 +41,10 @@ class ProviderSpec:
         return os.getenv(f"{self.id.upper()}_BASE_URL") or self.base_url
 
     def platform_api_key(self) -> str | None:
-        """The server-wide key from the environment, treating blanks and template placeholders as missing."""
+        """The server-wide key from the environment, treating blanks and template placeholders as missing. None when
+        the server uses only users' own keys."""
+        if not platform_keys_enabled():
+            return None
         value = os.getenv(self.api_key_env, "").strip()
         if not value or value.lower().startswith("your"):
             return None

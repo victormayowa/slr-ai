@@ -130,6 +130,16 @@ def configuration_checks() -> list[Check]:
         "BILLING_ENABLED is off, so every account is unlimited",
         "warn",
     )
+    own_keys_only = env("AI_PLATFORM_KEYS").lower() == "false"
+    checks.append(
+        Check(
+            "ai_keys",
+            "ok",
+            "AI uses only users' own provider keys (AI_PLATFORM_KEYS=false)"
+            if own_keys_only
+            else "AI uses a user's own key first, then the server's provider keys, which count against AI credits",
+        )
+    )
     provider = env("BILLING_PROVIDER") or "manual"
     add(
         "billing_provider",

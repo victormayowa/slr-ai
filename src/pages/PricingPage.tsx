@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { LIMIT_ORDER, limitText, price, type PublicPlans } from '../api/account';
+import { limitText, price, shownLimits, type PublicPlans } from '../api/account';
 import { errorMessage, requestJson } from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { LegalLinks } from '../components/LegalLinks';
+import { SiteBar } from '../components/SiteBar';
 import { GREEN, GREY, muted } from '../components/ui';
 
 export function PricingPage() {
@@ -27,11 +28,16 @@ export function PricingPage() {
   }, []);
 
   return (
-    <div className="app-container" style={{ flexDirection: 'column', alignItems: 'center', minHeight: '100vh', padding: '48px 16px' }}>
+    <div className="app-container" style={{ flexDirection: 'column', alignItems: 'center', minHeight: '100vh', padding: '104px 16px 48px' }}>
+      <SiteBar>
+        <Link to="/login" className="btn-glass" style={{ textDecoration: 'none' }}>Sign in</Link>
+      </SiteBar>
       <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-        <Link to="/" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.9rem' }}>← OmniReview</Link>
         <h1 style={{ fontSize: '2.5rem', margin: '12px 0 8px' }}>Plans</h1>
-        <p style={muted}>Every plan includes the full review workflow. AI work with your own API key never uses credits.</p>
+        <p style={muted}>
+          Every plan includes the full review workflow.{' '}
+          {data?.platform_ai_keys === false ? 'AI features use your own provider API keys.' : 'AI work with your own API key never uses credits.'}
+        </p>
       </div>
       {problem && <p role="alert">{problem}</p>}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', justifyContent: 'center', width: '100%', maxWidth: '1200px' }}>
@@ -47,7 +53,7 @@ export function PricingPage() {
               </div>
               {yearly && yearly !== 'Free' && <div style={muted}>or {yearly} / year</div>}
               <ul style={{ listStyle: 'none', padding: 0, margin: '16px 0', fontSize: '0.88rem' }}>
-                {LIMIT_ORDER.map(limit => (
+                {shownLimits(data).map(limit => (
                   <li key={limit} style={{ padding: '3px 0' }}>
                     <strong>{limitText(plan.limits[limit])}</strong> {data.limit_labels[limit]}
                   </li>

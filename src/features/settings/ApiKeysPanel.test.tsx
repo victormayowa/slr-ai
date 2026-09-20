@@ -6,7 +6,7 @@ import { AuthContext } from '../../auth/authContext';
 import { ApiKeysPanel } from './ApiKeysPanel';
 
 const provider = (id: string, label: string, overrides: Partial<AiProviderInfo> = {}): AiProviderInfo => ({
-  id, label, data_location: `${label} Inc., United States`, platform_key_configured: false, user_key: null, ...overrides,
+  id, label, data_location: `${label} Inc., United States`, platform_key_configured: false, own_key_required: false, user_key: null, ...overrides,
 });
 
 function renderPanel(apiRequest: (method: string, path: string, body?: unknown) => Promise<unknown>) {
@@ -34,6 +34,33 @@ describe('ApiKeysPanel', () => {
     expect(within(gemini).getByText(/processed by Google Gemini Inc\., United States/)).toBeTruthy();
     expect(within(screen.getByRole('group', { name: 'OpenAI' })).getByText('Your key ending in a1b2')).toBeTruthy();
     expect(within(screen.getByRole('group', { name: 'Mistral AI' })).getByText('No key available')).toBeTruthy();
+  });
+
+  it('says an own key is required when the server uses no provider keys of its own', async () => {
+    renderPanel(async () => [provider('gemini', 'Google Gemini', { own_key_required: true })]);
+
+    const gemini = await screen.findByRole('group', { name: 'Google Gemini' });
+    expect(within(gemini).getByText('Your own key is required')).toBeTruthy();
+    expect(screen.getByText(/only with your own provider keys/)).toBeTruthy();
+  });
+
+  it('lets the person choose which keys their AI tasks use', async () => {
+    let mode = 'auto';
+    const apiRequest = renderPanel(async (method, path, body) => {
+      if (path === '/api/me/ai-preferences') {
+        if (method === 'PUT') mode = (body as { ai_key_mode: string }).ai_key_mode;
+        return { ai_key_mode: mode, platform_keys_enabled: true };
+      }
+      if (path === '/api/ai/providers') return [provider('gemini', 'Google Gemini', { platform_key_configured: true })];
+      throw new Error(`Unexpected ${method} ${path}`);
+    });
+
+    const chosen = await screen.findByRole('radio', { name: /Only my own keys/ });
+    fireEvent.click(chosen);
+
+    await screen.findByRole('group', { name: 'Google Gemini' });
+    expect(apiRequest).toHaveBeenCalledWith('PUT', '/api/me/ai-preferences', { ai_key_mode: 'own' });
+    expect(mode).toBe('own');
   });
 
   it('saves a key without ever displaying it', async () => {

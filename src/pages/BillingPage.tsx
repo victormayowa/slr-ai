@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { LIMIT_ORDER, limitText, price, type BillingAccount, type BillingAccountSummary, type PublicPlans } from '../api/account';
+import { limitText, price, shownLimits, type BillingAccount, type BillingAccountSummary, type PublicPlans } from '../api/account';
 import { errorMessage } from '../api/client';
+import { StoragePanel } from '../features/settings/StoragePanel';
 import { useAuth } from '../auth/authContext';
 import { AMBER, BLUE, GREEN, RED, chip, muted, panel, row, smallButton } from '../components/ui';
 
@@ -20,7 +21,7 @@ function Meter({ label, used, limit }: { label: string; used: number; limit: num
         </span>
       </div>
       {!unlimited && (
-        <div role="meter" aria-label={label} aria-valuenow={used} aria-valuemin={0} aria-valuemax={limit} style={{ height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
+        <div role="meter" aria-label={label} aria-valuenow={used} aria-valuemin={0} aria-valuemax={limit} style={{ height: '6px', background: 'var(--surface-muted)', borderRadius: '3px', overflow: 'hidden' }}>
           <div style={{ width: `${share * 100}%`, height: '100%', background: color }} />
         </div>
       )}
@@ -158,11 +159,13 @@ export function BillingPage() {
 
             <section aria-label="Usage" style={{ ...panel, marginTop: '16px' }}>
               <h3 style={{ marginTop: 0 }}>Usage</h3>
-              {LIMIT_ORDER.map(limit => (
+              {shownLimits(account).map(limit => (
                 <Meter key={limit} label={account.limit_labels[limit]} used={account.usage[limit] ?? 0} limit={account.plan?.limits[limit]} />
               ))}
               <p style={muted}>Monthly allowances reset on {new Date(account.usage_resets_on).toLocaleDateString()}.</p>
             </section>
+
+            <StoragePanel kind={account.kind} accountId={account.id} label={account.label} />
 
             <section aria-label="Change plan" style={{ marginTop: '24px' }}>
               <div style={{ ...row, justifyContent: 'space-between' }}>

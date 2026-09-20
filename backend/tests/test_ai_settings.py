@@ -140,6 +140,28 @@ def test_saved_keys_are_encrypted_hidden_and_used_only_for_their_owner(client, m
     assert latest_run(project_id).key_source == "platform"
 
 
+def test_own_keys_only_mode_ignores_server_keys(client, make_user, fake_provider, monkeypatch):
+    monkeypatch.setenv("AI_PLATFORM_KEYS", "false")
+    _, alice = make_user()
+    project_id = create_project(client, alice)
+    pin(client, alice, project_id, "openai", "gpt-5.4-mini")
+    calls = fake_provider(GENERATED_PROTOCOL)
+
+    refused = generate(client, alice, project_id)
+
+    assert refused.status_code == 400
+    assert "your own AI provider keys only" in refused.json()["detail"]
+    assert calls == []
+    providers = client.get("/api/ai/providers", headers=alice).json()
+    assert all(p["own_key_required"] and not p["platform_key_configured"] for p in providers)
+    assert client.get("/api/billing/plans").json()["platform_ai_keys"] is False
+
+    client.put("/api/me/api-keys/openai", json={"api_key": "sk-alice-own-key-5678"}, headers=alice)
+    assert generate(client, alice, project_id).status_code == 200
+    assert calls[-1]["api_key"] == "sk-alice-own-key-5678"
+    assert latest_run(project_id).key_source == "user"
+
+
 def test_deleted_keys_are_gone(client, auth_headers):
     client.put("/api/me/api-keys/mistral", json={"api_key": "mistral-key-abcdefgh"}, headers=auth_headers)
 

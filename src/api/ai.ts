@@ -21,6 +21,7 @@ export type AiProviderInfo = {
   label: string;
   data_location: string;
   platform_key_configured: boolean;
+  own_key_required: boolean;
   user_key: SavedApiKey | null;
 };
 
@@ -28,3 +29,14 @@ export type AiProviderInfo = {
 export type KeyTestResult = { valid: boolean | null; message: string; key: SavedApiKey };
 
 export const modelDisplayName = (model: AiModelInfo) => `${model.provider_label} ${model.label}`;
+
+// Which API keys the person's AI tasks run on.
+export type AiKeyMode = 'auto' | 'own' | 'platform';
+
+export type AiPreferences = { ai_key_mode: AiKeyMode; platform_keys_enabled: boolean };
+
+export const KEY_MODE_LABELS: { id: AiKeyMode; title: string; detail: string }[] = [
+  { id: 'auto', title: 'Automatic', detail: "Your own key when you've added one for the provider, otherwise the AI included in your plan." },
+  { id: 'own', title: 'Only my own keys', detail: 'AI tasks always run on your keys, and stop if you have no key for the provider.' },
+  { id: 'platform', title: "Only the plan's included AI", detail: 'Your saved keys are left unused, and AI work counts against your plan credits.' },
+];

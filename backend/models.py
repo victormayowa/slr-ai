@@ -50,6 +50,9 @@ class User(Base):
     # Platform administrators manage the AI model catalog and benchmarks (scripts/make_admin.py).
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     email_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    # Which API key AI tasks started by this user run on (ai_access.resolve_ai): "auto" (their own key when saved,
+    # otherwise the server's), "own" (only their own keys), or "platform" (only the server's keys, using AI credits).
+    ai_key_mode: Mapped[str] = mapped_column(String(10), default="auto", server_default="auto")
     # When the address was confirmed through the link sent to it; null until then.
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Changing the password ends every session issued before it (auth_routes compares the token's pwv claim).
@@ -249,6 +252,9 @@ class SearchStrategy(Base):
     # Increases with every change; each version is kept in search_strategy_versions.
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    # The searches run from this strategy, so a reviewer can see which databases have been searched.
+    runs: Mapped[list["SearchRun"]] = relationship(viewonly=True, order_by="SearchRun.id")
 
 
 class SearchRun(Base):
@@ -2316,6 +2322,50 @@ class Subscription(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     plan: Mapped[Plan] = relationship()
+
+
+class StorageConnection(Base):
+    """A billing account's own S3-compatible bucket (storage_accounts.py). Credentials are encrypted.
+
+    Files kept in it have storage keys starting "s3:<id>:", so a file is always read from where it was written. When
+    `use_for_new_files` is off the account's new files go to OmniReview's storage again; existing files stay put until
+    moved (`pending_move`, carried out in batches by the worker).
+    """
+
+    __tablename__ = "storage_connections"
+    __table_args__ = (
+        CheckConstraint("(user_id IS NULL) <> (organization_id IS NULL)", name="ck_storage_connection_one_account"),
+        Index("uq_storage_connection_user", "user_id", unique=True, postgresql_where=text("user_id IS NOT NULL")),
+        Index(
+            "uq_storage_connection_organization",
+            "organization_id",
+            unique=True,
+            postgresql_where=text("organization_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
+    # "aws", "b2", "r2", "wasabi", "minio", or "other": only used to label the connection and prefill endpoints.
+    provider: Mapped[str] = mapped_column(String(20))
+    # Empty for AWS S3, which is addressed by region.
+    endpoint_url: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    region: Mapped[str] = mapped_column(String(60), default="", server_default="")
+    bucket: Mapped[str] = mapped_column(String(63))
+    # Folder inside the bucket, without a trailing slash; may be empty.
+    key_prefix: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    access_key_id_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    secret_access_key_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    access_key_last_four: Mapped[str] = mapped_column(String(4))
+    use_for_new_files: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    # "to_bucket" or "to_platform" while existing files are being moved; null otherwise.
+    pending_move: Mapped[str | None] = mapped_column(String(20))
+    move_error: Mapped[str] = mapped_column(Text, default="", server_default="")
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class BillingEvent(Base):

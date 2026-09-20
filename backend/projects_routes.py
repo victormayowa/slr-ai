@@ -272,9 +272,12 @@ def delete_project(
     access: ProjectAccess = Depends(project_access(Permission.DELETE_PROJECT)), db: Session = Depends(get_db)
 ):
     project_id = access.project.id
+    storage = document_storage()
+    # Buckets are found from the project's file references, which are gone once the project is deleted.
+    buckets = storage.buckets_for_project(project_id)
     db.delete(access.project)
     db.commit()
-    document_storage().delete_project(project_id)
+    storage.delete_project(project_id, buckets)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
