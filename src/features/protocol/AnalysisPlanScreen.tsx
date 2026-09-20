@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { errorMessage } from '../../api/client';
-import type { AnalysisPlan, PlannedAnalysis, PlannedOutcome } from '../../api/protocol';
+import type { AnalysisPlan, AnalysisPlanSuggestion, PlannedAnalysis, PlannedOutcome, ProtocolSuggestion } from '../../api/protocol';
 import { useAuth } from '../../auth/authContext';
 import { WorkspaceStageGate } from '../project/WorkspaceStageGate';
 import { useWorkspace } from '../project/workspaceContext';
@@ -11,7 +11,7 @@ const rowStyle = { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'c
 function AnalysisList({ title, items, onChange }: { title: string; items: PlannedAnalysis[]; onChange: (items: PlannedAnalysis[]) => void }) {
   const set = (index: number, changes: Partial<PlannedAnalysis>) => onChange(items.map((item, i) => (i === index ? { ...item, ...changes } : item)));
   return (
-    <fieldset style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '16px' }}>
+    <fieldset style={{ border: '1px solid var(--border)', borderRadius: '12px', padding: '16px' }}>
       <legend style={{ padding: '0 8px' }}>{title}</legend>
       {items.map((item, index) => (
         <div key={index} style={rowStyle}>
@@ -26,10 +26,11 @@ function AnalysisList({ title, items, onChange }: { title: string; items: Planne
 }
 
 export function AnalysisPlanScreen() {
-  const { projectId, protocolCatalog: catalog, refreshWorkflow } = useWorkspace();
+  const { projectId, protocolCatalog: catalog, refreshWorkflow, aiModelName } = useWorkspace();
   const { apiRequest } = useAuth();
   const [plan, setPlan] = useState<AnalysisPlan | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [suggestion, setSuggestion] = useState<ProtocolSuggestion<AnalysisPlanSuggestion> | null>(null);
+  const [busy, setBusy] = useState<'saving' | 'suggesting' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -52,8 +53,34 @@ export function AnalysisPlanScreen() {
   const setOutcome = (index: number, changes: Partial<PlannedOutcome>) =>
     update({ outcomes: plan.outcomes.map((outcome, i) => (i === index ? { ...outcome, ...changes } : outcome)) });
 
+  const suggest = async () => {
+    setBusy('suggesting');
+    setNotice(null);
+    try {
+      setSuggestion(await apiRequest('POST', `/api/projects/${projectId}/analysis-plan/ai`));
+    } catch (err) {
+      setNotice(errorMessage(err, 'Could not get a suggestion.'));
+    }
+    setBusy(null);
+  };
+
+  // Fills the form only: the plan is saved when the reviewer presses Save.
+  const applySuggestion = () => {
+    if (!suggestion) return;
+    const { synthesis_approach, outcomes, subgroups, sensitivity_analyses, heterogeneity } = suggestion.content;
+    const keep = <T extends { name: string }>(items: T[]) => items.filter(item => item.name.trim());
+    update({
+      synthesis_approach,
+      outcomes: [...keep(plan.outcomes), ...outcomes],
+      subgroups: [...keep(plan.subgroups), ...subgroups],
+      sensitivity_analyses: [...keep(plan.sensitivity_analyses), ...sensitivity_analyses],
+      heterogeneity: plan.heterogeneity.trim() ? plan.heterogeneity : heterogeneity,
+    });
+    setNotice('Suggestion added to the form. Edit what you need, then save.');
+  };
+
   const save = async () => {
-    setSaving(true);
+    setBusy('saving');
     setNotice(null);
     const named = <T extends { name: string }>(items: T[]) => items.filter(item => item.name.trim());
     try {
@@ -69,7 +96,7 @@ export function AnalysisPlanScreen() {
     } catch (err) {
       setNotice(errorMessage(err, 'Could not save the analysis plan.'));
     }
-    setSaving(false);
+    setBusy(null);
   };
 
   return (
@@ -78,6 +105,7 @@ export function AnalysisPlanScreen() {
       <WorkspaceStageGate stage="protocol" />
       <p style={{ color: 'var(--text-secondary)' }}>
         Pre-specify outcomes and analyses before the protocol is locked. Analyses added later are reported as post hoc.
+        The AI can propose a plan from your question and criteria; it is only a suggestion until you save it.
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div>
@@ -87,7 +115,7 @@ export function AnalysisPlanScreen() {
           </select>
         </div>
 
-        <fieldset style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '16px' }}>
+        <fieldset style={{ border: '1px solid var(--border)', borderRadius: '12px', padding: '16px' }}>
           <legend style={{ padding: '0 8px' }}>Outcomes</legend>
           {plan.outcomes.map((outcome, index) => (
             <div key={index} style={rowStyle}>
@@ -113,10 +141,44 @@ export function AnalysisPlanScreen() {
           <textarea id="heterogeneity" className="search-input" style={{ height: '80px', resize: 'vertical' }} placeholder="For example: I² and prediction intervals; random-effects model by default" value={plan.heterogeneity} onChange={e => update({ heterogeneity: e.target.value })} />
         </div>
 
+        {suggestion && (
+          <div role="region" aria-label="AI analysis plan suggestion" style={{ background: 'var(--surface-tint)', border: '1px solid rgba(30, 106, 224, 0.3)', borderRadius: '12px', padding: '16px' }}>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+              Suggested by {suggestion.provider} {suggestion.model}. Nothing changes until you add it and save.
+            </div>
+            <p style={{ margin: '8px 0' }}>
+              <strong>Planned synthesis:</strong>{' '}
+              {catalog.synthesis_approaches.find(option => option.key === suggestion.content.synthesis_approach)?.label ?? suggestion.content.synthesis_approach}
+            </p>
+            <ul style={{ margin: '0 0 12px', paddingLeft: '20px' }}>
+              {suggestion.content.outcomes.map((outcome, index) => (
+                <li key={`outcome-${index}`}>
+                  {outcome.priority}: {outcome.name}
+                  {outcome.timepoint ? ` at ${outcome.timepoint}` : ''}
+                  {outcome.measure ? ` (${outcome.measure})` : ''}
+                </li>
+              ))}
+              {suggestion.content.subgroups.map((item, index) => (
+                <li key={`subgroup-${index}`}>Subgroup: {item.name}{item.rationale ? ` — ${item.rationale}` : ''}</li>
+              ))}
+              {suggestion.content.sensitivity_analyses.map((item, index) => (
+                <li key={`sensitivity-${index}`}>Sensitivity: {item.name}{item.rationale ? ` — ${item.rationale}` : ''}</li>
+              ))}
+              {suggestion.content.heterogeneity && <li>Heterogeneity: {suggestion.content.heterogeneity}</li>}
+            </ul>
+            <button className="btn-glass" onClick={applySuggestion} style={{ padding: '8px 16px' }}>Add to the plan</button>
+          </div>
+        )}
+
         {notice && <p role="status" style={{ color: 'var(--text-secondary)', margin: 0 }}>{notice}</p>}
-        <button className="btn-primary" onClick={save} disabled={saving} style={{ padding: '12px 24px', alignSelf: 'flex-start' }}>
-          {saving ? 'Saving…' : 'Save analysis plan'}
-        </button>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          <button className="btn-glass" onClick={suggest} disabled={busy !== null} style={{ padding: '12px 20px' }}>
+            {busy === 'suggesting' ? 'Asking the AI…' : `Suggest with ${aiModelName}`}
+          </button>
+          <button className="btn-primary" onClick={save} disabled={busy !== null} style={{ padding: '12px 24px' }}>
+            {busy === 'saving' ? 'Saving…' : 'Save analysis plan'}
+          </button>
+        </div>
       </div>
     </section>
   );

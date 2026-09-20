@@ -5,7 +5,6 @@ AI output here is stored as suggestions (ProtocolSuggestion); nothing in the pro
 """
 
 import hashlib
-from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from typing import Any, Literal
 
@@ -15,19 +14,27 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import models
-from ai_access import new_ai_run, project_ai, record_usage
+from ai_suggestions import run_suggestion, suggestion_out
 from audit import record_event
 from auth_routes import get_current_user
 from database import get_db
-from llm.prompts import CONSISTENCY_PROMPT, QUESTION_PROMPT, SECTION_DRAFT_PROMPT, PromptTemplate
-from llm.runner import AIContext, AIResult
+from llm.prompts import (
+    ANALYSIS_PLAN_PROMPT,
+    CONSISTENCY_PROMPT,
+    QUESTION_PROMPT,
+    SECTION_DRAFT_PROMPT,
+)
 from permissions import Permission
 from projects_routes import ProjectAccess, project_access
 from protocol_design import project_criteria, project_sections, protocol_context, protocol_issues
 from protocol_frameworks import FINER_CRITERIA, FRAMEWORKS, PROTOCOL_SECTIONS, SECTIONS_BY_KEY, catalog
 from rate_limiting import ai_rate_limit
-from services.ai_protocol_design import draft_protocol_section, review_protocol_consistency, structure_question
-from services.errors import LLMError
+from services.ai_protocol_design import (
+    draft_protocol_section,
+    review_protocol_consistency,
+    structure_question,
+    suggest_analysis_plan,
+)
 from workflow import require_stage_open
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["protocol design"])
@@ -104,18 +111,6 @@ def analysis_plan_out(protocol: models.Protocol) -> dict:
         return AnalysisPlan.model_validate({}).model_dump()
 
 
-def suggestion_out(suggestion: models.ProtocolSuggestion) -> dict:
-    return {
-        "id": suggestion.id,
-        "kind": suggestion.kind,
-        "section_key": suggestion.section_key,
-        "content": suggestion.content,
-        "provider": suggestion.ai_run.provider,
-        "model": suggestion.ai_run.model,
-        "created_at": suggestion.created_at,
-    }
-
-
 def _latest_suggestions(db: Session, project_id: int, kind: str) -> list[models.ProtocolSuggestion]:
     return list(
         db.scalars(
@@ -136,52 +131,6 @@ def _record_change(db: Session, access: ProjectAccess, action: str, entity_id: i
         entity_id=entity_id,
         details=details,
     )
-
-
-async def run_protocol_ai(
-    db: Session,
-    access: ProjectAccess,
-    task: str,
-    prompt: PromptTemplate,
-    call: Callable[[AIContext], Awaitable[AIResult[dict[str, Any]]]],
-    section_key: str | None = None,
-) -> models.ProtocolSuggestion:
-    """Run an AI protocol task and store its output as a suggestion, recording failures as failed runs."""
-    ai = project_ai(db, access)
-    run = new_ai_run(access, task, prompt, ai)
-    try:
-        result = await call(ai)
-    except LLMError as exc:
-        run.status, run.error = "failed", str(exc)
-        record_usage(run, ai, exc.usage)
-        db.add(run)
-        db.commit()
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    run.status = "succeeded"
-    record_usage(run, ai, result.usage)
-    suggestion = models.ProtocolSuggestion(
-        project_id=access.project.id, ai_run=run, kind=task, section_key=section_key, content=result.value
-    )
-    db.add(suggestion)
-    db.flush()
-    record_event(
-        db,
-        project_id=access.project.id,
-        actor_id=access.user.id,
-        action=f"ai.{task}",
-        entity_type="protocol_suggestion",
-        entity_id=suggestion.id,
-        details={
-            "provider": run.provider,
-            "model": run.model,
-            "prompt_version": run.prompt_version,
-            "key_source": run.key_source,
-            "section": section_key,
-        },
-    )
-    db.commit()
-    return suggestion
 
 
 # Review question
@@ -249,9 +198,7 @@ async def suggest_question(
             f"Suggested criteria: {protocol.suggested_criteria}",
         ]
     )
-    suggestion = await run_protocol_ai(
-        db, access, "question", QUESTION_PROMPT, lambda ai: structure_question(ai, topic)
-    )
+    suggestion = await run_suggestion(db, access, "question", QUESTION_PROMPT, lambda ai: structure_question(ai, topic))
     return suggestion_out(suggestion)
 
 
@@ -278,6 +225,22 @@ def update_analysis_plan(
         _record_change(db, access, "analysis_plan.updated", protocol.id, {"plan": plan})
     db.commit()
     return analysis_plan_out(protocol)
+
+
+@router.post("/analysis-plan/ai", dependencies=[Depends(ai_rate_limit)])
+async def suggest_plan(
+    access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)), db: Session = Depends(get_db)
+):
+    """Suggest outcomes and analyses from the question and criteria. Reviewers apply it by saving the plan."""
+    require_stage_open(db, access.project.id, "protocol")
+    protocol = _protocol(access)
+    if not protocol.question.strip() and not protocol.description.strip():
+        raise HTTPException(status_code=400, detail="Write the review question first, or describe the study in Setup")
+    context = protocol_context(db, access.project)
+    suggestion = await run_suggestion(
+        db, access, "analysis_plan", ANALYSIS_PLAN_PROMPT, lambda ai: suggest_analysis_plan(ai, context)
+    )
+    return suggestion_out(suggestion)
 
 
 # Protocol document
@@ -367,7 +330,7 @@ async def draft_section(
         raise HTTPException(status_code=404, detail="Unknown protocol section")
     require_stage_open(db, access.project.id, "protocol")
     context = protocol_context(db, access.project, exclude_section=key)
-    suggestion = await run_protocol_ai(
+    suggestion = await run_suggestion(
         db,
         access,
         "section",
@@ -405,7 +368,7 @@ async def review_consistency(
     framework = FRAMEWORKS.get(protocol.framework)
     element_keys = {element.key for element in framework.elements} if framework else set()
     context = protocol_context(db, access.project)
-    suggestion = await run_protocol_ai(
+    suggestion = await run_suggestion(
         db,
         access,
         "consistency",

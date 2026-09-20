@@ -1,4 +1,5 @@
-"""AI suggestions for protocol design: a structured review question, PRISMA-P section drafts, and a consistency review.
+"""AI suggestions for protocol design: a structured review question, a pre-specified analysis plan, PRISMA-P section
+drafts, and a consistency review.
 
 All output is a suggestion for reviewers. Drafts mark missing information with placeholders instead of inventing it.
 """
@@ -8,9 +9,22 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from llm.prompts import CONSISTENCY_PROMPT, QUESTION_PROMPT, SECTION_DRAFT_PROMPT, TOPIC_QUESTIONS_PROMPT
+from llm.prompts import (
+    ANALYSIS_PLAN_PROMPT,
+    CONSISTENCY_PROMPT,
+    QUESTION_PROMPT,
+    SECTION_DRAFT_PROMPT,
+    TOPIC_QUESTIONS_PROMPT,
+)
 from llm.runner import AIContext, AIResult, complete_structured
-from protocol_frameworks import FINER_CRITERIA, FRAMEWORKS, Section, describe_frameworks
+from protocol_frameworks import (
+    FINER_CRITERIA,
+    FRAMEWORKS,
+    OUTCOME_PRIORITIES,
+    SYNTHESIS_APPROACHES,
+    Section,
+    describe_frameworks,
+)
 from services.errors import LLMError
 
 FrameworkKey = Literal["PICO", "PICOS", "PECO", "SPIDER", "PCC"]
@@ -76,6 +90,78 @@ async def draft_protocol_section(ai: AIContext, section: Section, context: dict[
         raise error
     missing = [item.strip() for item in result.value.missing_information if item.strip()]
     return AIResult({"content": content, "missing_information": missing}, result.usage)
+
+
+# Analysis plan
+
+SynthesisApproach = Literal["meta_analysis", "swim", "narrative", "undecided"]
+OutcomePriority = Literal["primary", "secondary", "adverse"]
+# What a reviewer can take in at a glance, and what PRISMA-P asks to be pre-specified rather than an exhaustive list.
+MAX_OUTCOMES = 10
+MAX_ANALYSES = 5
+
+
+class SuggestedOutcome(BaseModel):
+    name: str
+    priority: OutcomePriority
+    timepoint: str = ""
+    measure: str = ""
+
+
+class SuggestedAnalysis(BaseModel):
+    name: str
+    rationale: str = ""
+
+
+class AnalysisPlanOutput(BaseModel):
+    synthesis_approach: SynthesisApproach
+    outcomes: list[SuggestedOutcome] = []
+    subgroups: list[SuggestedAnalysis] = []
+    sensitivity_analyses: list[SuggestedAnalysis] = []
+    heterogeneity: str = ""
+
+
+def _named(items: list[SuggestedAnalysis], limit: int) -> list[dict[str, str]]:
+    cleaned = [{"name": item.name.strip(), "rationale": item.rationale.strip()} for item in items if item.name.strip()]
+    return cleaned[:limit]
+
+
+async def suggest_analysis_plan(ai: AIContext, context: dict[str, Any]) -> AIResult[dict[str, Any]]:
+    """Suggest outcomes, subgroup and sensitivity analyses, and a synthesis approach from the protocol so far.
+
+    The shape matches the analysis plan reviewers edit, so the screen can fill the form from it.
+    """
+    prompt = ANALYSIS_PLAN_PROMPT.render(
+        project=json.dumps(context, indent=2, default=str),
+        synthesis_approaches=", ".join(f"{key} ({label})" for key, label in SYNTHESIS_APPROACHES.items()),
+        outcome_priorities=", ".join(f"{key} ({label})" for key, label in OUTCOME_PRIORITIES.items()),
+    )
+    result = await complete_structured(ai, prompt, AnalysisPlanOutput, max_tokens=3000)
+    output = result.value
+    outcomes = [
+        {
+            "name": outcome.name.strip(),
+            "priority": outcome.priority,
+            "timepoint": outcome.timepoint.strip(),
+            "measure": outcome.measure.strip(),
+        }
+        for outcome in output.outcomes
+        if outcome.name.strip()
+    ][:MAX_OUTCOMES]
+    if not outcomes:
+        error = LLMError(f"{ai.provider.label} suggested no outcomes. Try again, or write the plan yourself.")
+        error.usage = result.usage
+        raise error
+    return AIResult(
+        {
+            "synthesis_approach": output.synthesis_approach,
+            "outcomes": outcomes,
+            "subgroups": _named(output.subgroups, MAX_ANALYSES),
+            "sensitivity_analyses": _named(output.sensitivity_analyses, MAX_ANALYSES),
+            "heterogeneity": output.heterogeneity.strip(),
+        },
+        result.usage,
+    )
 
 
 class ConsistencyIssue(BaseModel):

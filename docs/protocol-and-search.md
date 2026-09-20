@@ -9,9 +9,13 @@ workload. PROSPERO has no public search API, so search it yourself before regist
 ## Review question and protocol
 
 Structure the question with PICO, PECO, SPIDER, PCC, or another framework, and rate it against FINER. The AI can
-suggest a question, criteria, search strings, and drafts of PRISMA-P sections; nothing is saved until you accept it.
+suggest a question, criteria, search strings, an analysis plan, and drafts of PRISMA-P sections; nothing is saved until
+you accept it.
 The analysis plan records pre-specified outcomes (primary, secondary, adverse), subgroup and sensitivity analyses, and
-the synthesis approach.
+the synthesis approach. "Suggest with <model>" proposes outcomes with their timepoints and effect measures, subgroup
+and sensitivity analyses with a reason for each, and a synthesis approach, all from the question and criteria you have
+written. It is added to the form only when you press "Add to the plan", and saved only when you save, so what is
+pre-specified stays the reviewers' decision.
 
 ## Registration
 
@@ -20,9 +24,19 @@ the registration number, or waive registration with a reason.
 
 ## Searches
 
+Start by agreeing which sources to search. "Suggest databases with \<model\>" asks the AI which sources suit your
+question and says what each adds, marking those OmniReview can search itself and those you run on their own platform.
+Tick the ones you agree with, add any of your own, and OmniReview drafts a search string for each in that database's
+syntax, which you can then edit.
+
 Search connectors run strategies on PubMed, Europe PMC, OpenAlex, Crossref, Semantic Scholar, and ClinicalTrials.gov.
 Databases without an open API (such as Embase, CINAHL, or CENTRAL) are searched on their own platforms and imported as
-export files. Every run records the database, interface, date, search string, and record count for PRISMA-S.
+export files; each of those says where to run the string and which export format to bring back.
+
+Every strategy shows what has happened to it: "Not searched yet", or the date it was searched and how many records it
+added, and a warning when the string has changed since the last run. A line above the strategies counts how many
+databases are done, how many records they have added, and which sources are still to do. Every run records the
+database, interface, date, search string, and record count for PRISMA-S.
 
 ## Imports
 

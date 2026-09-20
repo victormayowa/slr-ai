@@ -9,12 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import models
+from ai_suggestions import run_suggestion, suggestion_out
 from audit import record_event
 from database import get_db
 from llm.prompts import TOPIC_QUESTIONS_PROMPT
 from permissions import Permission
 from projects_routes import ProjectAccess, get_in_project, project_access
-from protocol_design_routes import run_protocol_ai, suggestion_out
 from rate_limiting import ai_rate_limit
 from services.ai_protocol_design import suggest_topic_questions
 from topic_exploration import WorkloadAssumptions, explore_topic
@@ -164,5 +164,5 @@ async def suggest_questions(
         result.value["exploration_id"] = exploration.id
         return result
 
-    suggestion = await run_protocol_ai(db, access, "topic_questions", TOPIC_QUESTIONS_PROMPT, call)
+    suggestion = await run_suggestion(db, access, "topic_questions", TOPIC_QUESTIONS_PROMPT, call)
     return suggestion_out(suggestion)

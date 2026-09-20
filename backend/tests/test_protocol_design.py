@@ -121,6 +121,55 @@ def test_the_analysis_plan_is_validated_and_saved(client, project):
     assert event["action"] == "analysis_plan.updated"
 
 
+def test_an_ai_analysis_plan_is_a_suggestion_until_the_reviewer_saves_it(client, project, fake_provider):
+    project_id, headers = project
+    client.put(url(project_id, "protocol"), json=PROTOCOL, headers=headers)
+    reply = {
+        "synthesis_approach": "meta_analysis",
+        "outcomes": [
+            {"name": "Myocardial infarction", "priority": "primary", "timepoint": "5 years", "measure": "risk ratio"},
+            {"name": "  ", "priority": "secondary"},
+        ],
+        "subgroups": [{"name": "Diabetes at baseline", "rationale": "Effects may differ by baseline risk."}],
+        "sensitivity_analyses": [{"name": "Excluding high risk of bias", "rationale": "Tests the main result."}],
+        "heterogeneity": "I-squared with prediction intervals; random effects.",
+    }
+    fake_provider(json.dumps(reply))
+
+    response = client.post(url(project_id, "analysis-plan/ai"), headers=headers)
+
+    assert response.status_code == 200, response.text
+    content = response.json()["content"]
+    assert [outcome["name"] for outcome in content["outcomes"]] == ["Myocardial infarction"], "blank names are dropped"
+    assert content["outcomes"][0]["measure"] == "risk ratio"
+    assert content["subgroups"][0]["rationale"] == "Effects may differ by baseline risk."
+    assert client.get(url(project_id, "analysis-plan"), headers=headers).json()["outcomes"] == []
+    with SessionLocal() as db:
+        run = db.scalar(select(models.AIRun).where(models.AIRun.project_id == project_id))
+        assert (run.task, run.prompt_version, run.status) == ("analysis_plan", "analysis_plan-v1", "succeeded")
+    assert client.get(url(project_id, "audit"), headers=headers).json()["events"][0]["action"] == "ai.analysis_plan"
+
+    saved = client.put(url(project_id, "analysis-plan"), json=content, headers=headers)
+
+    assert saved.status_code == 200, saved.text
+    assert [outcome["name"] for outcome in saved.json()["outcomes"]] == ["Myocardial infarction"]
+
+
+def test_an_analysis_plan_suggestion_needs_a_question_and_the_protocol_open(client, project, fake_provider, make_user):
+    project_id, headers = project
+    fake_provider(
+        json.dumps({"synthesis_approach": "narrative", "outcomes": [{"name": "Pain", "priority": "primary"}]})
+    )
+
+    refused = client.post(url(project_id, "analysis-plan/ai"), headers=headers)
+
+    assert refused.status_code == 400
+    assert "review question" in refused.json()["detail"]
+    client.put(url(project_id, "protocol"), json=PROTOCOL, headers=headers)
+    viewer = add_member(client, project_id, headers, make_user, "viewer")
+    assert client.post(url(project_id, "analysis-plan/ai"), headers=viewer).status_code == 403
+
+
 def test_section_drafts_are_grounded_and_accepted_with_provenance(client, project, make_user, fake_provider):
     project_id, headers = project
     client.put(url(project_id, "protocol"), json=PROTOCOL, headers=headers)

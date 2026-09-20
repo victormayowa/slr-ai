@@ -60,6 +60,15 @@ export type PlannedOutcome = { name: string; priority: 'primary' | 'secondary' |
 
 export type PlannedAnalysis = { name: string; rationale: string };
 
+// The AI's proposed plan: the same shape as the plan reviewers edit, so it can fill the form.
+export type AnalysisPlanSuggestion = {
+  synthesis_approach: AnalysisPlan['synthesis_approach'];
+  outcomes: PlannedOutcome[];
+  subgroups: PlannedAnalysis[];
+  sensitivity_analyses: PlannedAnalysis[];
+  heterogeneity: string;
+};
+
 export type AnalysisPlan = {
   synthesis_approach: 'meta_analysis' | 'swim' | 'narrative' | 'undecided';
   outcomes: PlannedOutcome[];

@@ -53,6 +53,49 @@ For boolean_searches, give one entry per database with the
 database name (for example PubMed or Embase) and a complete search string in that database's syntax.""",
 )
 
+SEARCH_DATABASES_PROMPT = PromptTemplate(
+    "search_databases",
+    1,
+    """You are a medical librarian advising which sources a systematic review should search.
+$untrusted_text_note
+
+<project>
+$project
+</project>
+
+Sources OmniReview knows, with how each is searched:
+$sources
+
+Recommend the sources this review should search, most important first, and at most 10. For each, give the source name
+and one sentence saying what it adds for this specific question, such as the literature or study types it covers that
+the others don't. Include the subject databases the topic needs, at least one trial register when the review includes
+trials, and a source for grey literature or preprints when they matter for the question. You may recommend a source
+that isn't in the list above when the topic needs it; use its usual name.
+
+Judge coverage for this question only. Don't recommend a source just because it is well known, and never claim a
+source is available through OmniReview: reviewers are told that separately.""",
+)
+
+SEARCH_STRINGS_PROMPT = PromptTemplate(
+    "search_strings",
+    1,
+    """You are a medical librarian writing database search strings for a systematic review.
+$untrusted_text_note
+
+<project>
+$project
+</project>
+
+Write one search string for each of these databases, in that database's own syntax:
+$databases
+
+Build each string from the review question and the accepted eligibility criteria: concept blocks combined with AND,
+synonyms within a block combined with OR, using each database's field tags and controlled vocabulary where it has one
+(for example MeSH in PubMed, Emtree in Embase). Cover the population and the intervention or exposure; add a study
+design filter only when the criteria call for one. Don't add date, language, or publication-type limits unless the
+criteria state them. Return the string only, with no commentary.""",
+)
+
 SCREENING_PROMPT = PromptTemplate(
     "screening",
     3,
@@ -230,6 +273,34 @@ For each FINER criterion (feasible, interesting, novel, ethical, relevant), writ
 should check. These notes prompt the reviewers' own judgment; they aren't verdicts.""",
 )
 
+ANALYSIS_PLAN_PROMPT = PromptTemplate(
+    "analysis_plan",
+    1,
+    """You help researchers pre-specify the analysis plan of a systematic review, before any studies are screened.
+$untrusted_text_note
+
+<project>
+$project
+</project>
+
+Planned synthesis options (use one key): $synthesis_approaches
+Outcome priorities (use one key per outcome): $outcome_priorities
+
+Propose, using only what the project above states or clearly implies:
+- outcomes worth pre-specifying: at most 2 primary, 6 secondary, and 2 adverse-event outcomes. For each, give the
+  outcome as reviewers would measure it, when it is measured (timepoint), and the effect measure that suits its data
+  (for example risk ratio, odds ratio, mean difference, hazard ratio). Leave timepoint or measure empty when the
+  project doesn't imply one.
+- at most 5 subgroup analyses and 5 sensitivity analyses, each with one sentence saying why it is planned. Subgroups
+  must be differences between studies or participants that could plausibly change the effect. Sensitivity analyses
+  must test decisions the reviewers make, such as excluding studies at high risk of bias.
+- the synthesis approach that fits the question and the likely evidence, and a short note on how heterogeneity will be
+  judged and which model is planned.
+
+Never invent studies, numbers, or findings: nothing has been screened yet. Prefer fewer, well-justified analyses over
+a long list. Everything you return is a suggestion for reviewers to edit, accept, or reject.""",
+)
+
 SECTION_DRAFT_PROMPT = PromptTemplate(
     "section",
     1,
@@ -305,6 +376,9 @@ PROMPTS = {
         SYNTHESIS_PROMPT,
         FAQ_PROMPT,
         QUESTION_PROMPT,
+        SEARCH_DATABASES_PROMPT,
+        SEARCH_STRINGS_PROMPT,
+        ANALYSIS_PLAN_PROMPT,
         SECTION_DRAFT_PROMPT,
         CONSISTENCY_PROMPT,
         TOPIC_QUESTIONS_PROMPT,
