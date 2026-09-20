@@ -2324,6 +2324,36 @@ class Subscription(Base):
     plan: Mapped[Plan] = relationship()
 
 
+class AICreditEntry(Base):
+    """One movement of an account's prepaid AI balance (ai_credit.py): a top-up, an administrator's adjustment, or the
+    charge for one AI run on the server's keys. The balance is the sum of the entries, so every change stays visible.
+
+    Amounts are US dollars, positive when credit is added and negative when it is spent.
+    """
+
+    __tablename__ = "ai_credit_entries"
+    __table_args__ = (
+        CheckConstraint("(user_id IS NULL) <> (organization_id IS NULL)", name="ck_ai_credit_one_account"),
+        # A payment or an AI run is charged once, however often its webhook or job is retried.
+        UniqueConstraint("reference", name="uq_ai_credit_reference"),
+        Index("ix_ai_credit_user", "user_id"),
+        Index("ix_ai_credit_organization", "organization_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"))
+    # "topup" (paid for), "grant" (added by an administrator), "usage" (an AI run), or "refund".
+    kind: Mapped[str] = mapped_column(String(10))
+    amount_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6))
+    description: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    # What this entry is for, and what makes it idempotent: "run:<id>", "payment:<provider event id>".
+    reference: Mapped[str | None] = mapped_column(String(120))
+    ai_run_id: Mapped[int | None] = mapped_column(ForeignKey("ai_runs.id", ondelete="SET NULL"))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class StorageConnection(Base):
     """A billing account's own S3-compatible bucket (storage_accounts.py). Credentials are encrypted.
 

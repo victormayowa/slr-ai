@@ -446,3 +446,22 @@ def test_an_overloaded_model_suggests_waiting_or_choosing_another():
 
     assert '"gemini-3.8-flash" is overloaded' in message
     assert "Project Setup" in message and "sk-secret-123" not in message
+
+
+# The house style for Word documents
+
+
+def test_every_word_document_is_times_new_roman_black_and_one_and_a_half_spaced():
+    import docx_style
+
+    document = docx_style.styled_document()
+    document.add_heading("Methods", level=2)
+    document.add_paragraph("We searched PubMed.")
+
+    for style in document.styles:
+        if style.type.name != "PARAGRAPH":
+            continue
+        assert style.font.name == docx_style.FONT_NAME, style.name
+        assert str(style.font.color.rgb) == "000000", style.name
+        assert style.paragraph_format.line_spacing == 1.5, style.name
+    assert docx_style.reference_docx().exists(), "Pandoc needs the reference file to match"

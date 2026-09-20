@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { limitText, price, shownLimits, type BillingAccount, type BillingAccountSummary, type PublicPlans } from '../api/account';
+import { limitText, money, price, shownLimits, type BillingAccount, type BillingAccountSummary, type PublicPlans } from '../api/account';
 import { errorMessage } from '../api/client';
 import { StoragePanel } from '../features/settings/StoragePanel';
 import { useAuth } from '../auth/authContext';
@@ -155,6 +155,45 @@ export function BillingPage() {
                   </button>
                 )}
               </div>
+            </section>
+
+            <section aria-label="AI balance" style={{ ...panel, marginTop: '16px' }}>
+              <div style={{ ...row, justifyContent: 'space-between' }}>
+                <h3 style={{ marginTop: 0, marginBottom: 0 }}>AI balance</h3>
+                <strong style={{ fontSize: '1.3rem', color: account.ai_balance_usd > 0 ? GREEN : RED }}>
+                  {money(account.ai_balance_usd)}
+                </strong>
+              </div>
+              <p style={muted}>
+                Pays for AI run on OmniReview's keys, at the prices on the <a href="/pricing">pricing page</a>. AI you
+                run on your own provider key is never charged here.
+              </p>
+              <div style={{ ...row, marginTop: '8px' }}>
+                {[10, 25, 50, 100].map(amount => (
+                  <button key={amount} className="btn-glass" style={smallButton} disabled={busy} onClick={() => act(async () => {
+                    const { url } = await apiRequest('POST', `/api/billing/accounts/${selected}/ai-credit/checkout`, { amount_usd: amount });
+                    goTo(url);
+                    return 'Opening the payment page…';
+                  }, 'The top-up could not be started.')}>
+                    Add {money(amount)}
+                  </button>
+                ))}
+              </div>
+              {account.ai_entries.length > 0 && (
+                <table style={{ width: '100%', marginTop: '12px', fontSize: '0.85rem' }}>
+                  <tbody>
+                    {account.ai_entries.map(entry => (
+                      <tr key={entry.id}>
+                        <td style={{ padding: '4px 0' }}>{new Date(entry.created_at).toLocaleDateString()}</td>
+                        <td style={{ padding: '4px 0' }}>{entry.description || entry.kind}</td>
+                        <td style={{ padding: '4px 0', textAlign: 'right', color: entry.amount_usd < 0 ? 'var(--text-secondary)' : GREEN }}>
+                          {money(entry.amount_usd)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </section>
 
             <section aria-label="Usage" style={{ ...panel, marginTop: '16px' }}>

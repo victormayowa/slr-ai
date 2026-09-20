@@ -6,8 +6,6 @@ measured from what the database already records, rather than from a separate cou
 - projects: the account's projects;
 - members_per_project: the members of the project being changed;
 - records_per_month: records added to the account's projects since the start of the month (searches and imports);
-- ai_credits_per_month: tokens used with the server's API keys this month, 1 credit per 1,000 tokens. Calls made with
-  a user's own key never count;
 - storage_mb: stored document files kept in OmniReview's storage (files in the account's own bucket don't count);
 - living_schedules: active surveillance schedules;
 - compute_minutes_per_month: time spent running analyses in R this month.
@@ -32,7 +30,6 @@ LIMIT_LABELS: dict[str, str] = {
     "projects": "projects",
     "members_per_project": "members in a project",
     "records_per_month": "records added this month",
-    "ai_credits_per_month": "AI credits this month",
     "storage_mb": "MB of stored documents",
     "living_schedules": "active surveillance schedules",
     "compute_minutes_per_month": "minutes of analysis compute this month",
@@ -43,11 +40,10 @@ FEATURE_LABELS: dict[str, str] = {
     "bring_your_own_storage": "storing files in your own bucket",
 }
 # Usage measured over the calendar month rather than as a total.
-MONTHLY = {"records_per_month", "ai_credits_per_month", "compute_minutes_per_month"}
+MONTHLY = {"records_per_month", "compute_minutes_per_month"}
 # Consumed as work runs, so the check is whether any allowance is left rather than whether an addition fits.
-METERED = {"ai_credits_per_month", "compute_minutes_per_month"}
+METERED = {"compute_minutes_per_month"}
 ACTIVE_STATUSES = {"active", "trialing", "past_due"}
-TOKENS_PER_CREDIT = 1000
 _MB = 1024 * 1024
 
 
@@ -158,22 +154,6 @@ def usage_of(db: Session, account: Account, limit: str) -> float:
             )
             or 0
         )
-    if limit == "ai_credits_per_month":
-        tokens = db.scalar(
-            select(
-                func.coalesce(
-                    func.sum(
-                        func.coalesce(models.AIRun.input_tokens, 0) + func.coalesce(models.AIRun.output_tokens, 0)
-                    ),
-                    0,
-                )
-            ).where(
-                models.AIRun.project_id.in_(project_ids(account)),
-                models.AIRun.key_source == "platform",
-                models.AIRun.created_at >= since,
-            )
-        )
-        return round(float(tokens or 0) / TOKENS_PER_CREDIT, 1)
     if limit == "storage_mb":
         size = db.scalar(
             select(func.coalesce(func.sum(models.Document.size_bytes), 0)).where(
@@ -277,9 +257,9 @@ def require_user_feature(db: Session, user: models.User, feature: str) -> None:
 
 
 def require_ai(db: Session, project: models.Project, provider: str) -> None:
-    """Checked before AI work that uses the server's API keys. Work with a user's own key is never limited."""
+    """Checked before AI work that uses the server's API keys: which providers the plan allows. What the work costs is
+    taken from the account's prepaid balance (ai_credit.py). Work with a user's own key is never limited."""
     account = account_for_project(project)
-    require(db, account, "ai_credits_per_month")
     if not billing_enabled():
         return
     plan = plan_for(db, account)

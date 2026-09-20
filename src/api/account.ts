@@ -35,6 +35,25 @@ export type BillingConfig = {
 
 export type PublicPlans = BillingConfig & { plans: PlanInfo[] };
 
+// What AI costs on OmniReview's keys. Work on your own key is never charged.
+export type AiEnginePrice = {
+  provider: string;
+  provider_label: string;
+  model: string;
+  label: string;
+  purpose: string;
+  data_location: string | null;
+  input_per_mtok: number;
+  output_per_mtok: number;
+};
+
+export type AiPriceList = { engines: AiEnginePrice[]; currency: string; unit: string; own_keys_free: boolean; platform_ai_keys: boolean };
+
+export type AiCreditEntry = { id: number; kind: 'topup' | 'grant' | 'usage' | 'refund'; amount_usd: number; description: string; created_at: string };
+
+export const money = (amount: number) =>
+  new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(amount);
+
 export type BillingAccountSummary = { kind: 'user' | 'organization'; id: number; label: string; plan: string | null };
 
 export type BillingAccount = BillingConfig & {
@@ -51,6 +70,8 @@ export type BillingAccount = BillingConfig & {
     provider: string;
   } | null;
   usage: Record<string, number>;
+  ai_balance_usd: number;
+  ai_entries: AiCreditEntry[];
   usage_resets_on: string;
 };
 

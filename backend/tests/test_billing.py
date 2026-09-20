@@ -1,11 +1,13 @@
-"""Billing and plan limits: public plans, limits at every place work is created, AI credits that exempt users' own
-keys, the simulated checkout and its webhooks (idempotent, signed), cancellation, administrator plan assignment, and
-the Stripe adapter's signatures, event mapping, and checkout request."""
+"""Billing and plan limits: public plans, limits at every place work is created, the prepaid AI balance that work on
+a user's own key never touches, the simulated checkout and its webhooks (idempotent, signed), cancellation,
+administrator plan assignment, and the Stripe adapter's signatures, event mapping, and checkout request."""
 
 import hashlib
 import hmac
 import json
 import time
+from decimal import Decimal
+from typing import Literal
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -13,10 +15,11 @@ from sqlalchemy import select
 from test_governance import make_admin
 from workflow_helpers import RECORDS, add_member, create_project, lock_protocol, open_screening, url
 
+import ai_credit
 import billing
-import entitlements
 import models
 from database import SessionLocal
+from entitlements import Account
 
 
 @pytest.fixture(autouse=True)
@@ -34,7 +37,34 @@ def restore_plans():
 
 @pytest.fixture
 def billing_on(monkeypatch):
+    """Billing enforced, with every model priced, as a server that charges for AI would be set up."""
     monkeypatch.setenv("BILLING_ENABLED", "true")
+    with SessionLocal() as db:
+        before = {
+            model.id: (model.input_price_per_mtok, model.output_price_per_mtok)
+            for model in db.scalars(select(models.AIModel))
+        }
+        for model in db.scalars(select(models.AIModel)):
+            model.input_price_per_mtok, model.output_price_per_mtok = Decimal("1"), Decimal("3")
+        db.commit()
+    yield
+    with SessionLocal() as db:
+        for model in db.scalars(select(models.AIModel)):
+            model.input_price_per_mtok, model.output_price_per_mtok = before[model.id]
+        db.commit()
+
+
+def credit(account_kind: Literal["user", "organization"], account_id: int, amount: str) -> None:
+    with SessionLocal() as db:
+        ai_credit.add_entry(
+            db, Account(account_kind, account_id), kind="grant", amount_usd=Decimal(amount), description="test"
+        )
+        db.commit()
+
+
+def balance_of(account_kind: Literal["user", "organization"], account_id: int) -> Decimal:
+    with SessionLocal() as db:
+        return ai_credit.balance(db, Account(account_kind, account_id))
 
 
 def set_limits(code: str, **limits) -> None:
@@ -100,6 +130,7 @@ def test_members_and_invitations_are_limited(client, auth_headers, make_user, bi
 
 
 def test_record_imports_are_limited(client, auth_headers, fake_provider, billing_on):
+    credit("user", client.get("/api/auth/me", headers=auth_headers).json()["id"], "5")
     project_id = create_project(client, auth_headers)
     lock_protocol(client, project_id, auth_headers, fake_provider)
     set_limits("free", records_per_month=1)
@@ -112,48 +143,102 @@ def test_record_imports_are_limited(client, auth_headers, fake_provider, billing
     assert "records added this month" in response.json()["detail"]
 
 
-def test_ai_credits_limit_the_servers_keys_but_never_your_own(client, auth_headers, fake_provider, billing_on):
+def test_ai_on_the_servers_keys_needs_a_balance_but_your_own_key_never_does(
+    client, auth_headers, fake_provider, billing_on
+):
+    user_id = client.get("/api/auth/me", headers=auth_headers).json()["id"]
+    credit("user", user_id, "10")
     project_id = create_project(client, auth_headers)
     records = open_screening(client, project_id, auth_headers, fake_provider)
-    set_limits("free", ai_credits_per_month=0)
     body = {"record_ids": [records[0]["id"]]}
+    credit("user", user_id, "-10")  # spent, so the next request has nothing to pay with
 
     blocked = client.post(url(project_id, "screening/ai"), json=body, headers=auth_headers)
+
     assert blocked.status_code == 402
-    assert "AI credits" in blocked.json()["detail"]
+    assert "AI balance is empty" in blocked.json()["detail"]
 
     model = client.get(url(project_id), headers=auth_headers).json()["ai_model"]
-    saved = client.put(
-        f"/api/me/api-keys/{model['provider']}", json={"api_key": "my-own-key-123"}, headers=auth_headers
-    )
-    assert saved.status_code == 200
+    client.put(f"/api/me/api-keys/{model['provider']}", json={"api_key": "my-own-key-123"}, headers=auth_headers)
     fake_provider('{"decision": "Include", "reasoning": "Adults.", "confidence": 0.9}')
 
-    allowed = client.post(url(project_id, "screening/ai"), json=body, headers=auth_headers)
-    assert allowed.status_code == 202, allowed.text
+    own_key = client.post(url(project_id, "screening/ai"), json=body, headers=auth_headers)
+
+    assert own_key.status_code == 202, own_key.text
+    assert balance_of("user", user_id) == 0, "work on your own key is never charged"
 
 
-def test_usage_counts_only_tokens_on_the_servers_keys(client, auth_headers):
+def test_ai_on_the_servers_keys_is_charged_at_four_times_what_it_costs(client, auth_headers, billing_on):
+    user_id = client.get("/api/auth/me", headers=auth_headers).json()["id"]
     project_id = create_project(client, auth_headers)
+    credit("user", user_id, "10")
+
     with SessionLocal() as db:
-        for source, tokens in (("platform", 5000), ("user", 9000)):
-            db.add(
-                models.AIRun(
-                    project_id=project_id,
-                    task="screening",
-                    provider="gemini",
-                    model="test",
-                    prompt_version="screening-v3",
-                    status="succeeded",
-                    key_source=source,
-                    input_tokens=tokens,
-                    output_tokens=0,
-                )
-            )
+        # A run of 1M input and 1M output tokens: $1 + $3 to us, so $16 to the customer at four times cost.
+        run = models.AIRun(
+            project_id=project_id,
+            task="screening",
+            provider="gemini",
+            model="test",
+            prompt_version="screening-v3",
+            status="succeeded",
+            key_source="platform",
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            cost_usd=Decimal("4"),
+        )
+        db.add(run)
         db.commit()
-        project = db.get(models.Project, project_id)
-        assert project is not None
-        assert entitlements.usage_of(db, entitlements.account_for_project(project), "ai_credits_per_month") == 5.0
+        ai_credit.charge_unbilled_runs(db)
+        db.commit()
+
+    charged = balance_of("user", user_id)
+    assert charged == Decimal("-6.000000"), "$10 credit less $16 charged: 1M in at $1 and 1M out at $3, times four"
+
+    with SessionLocal() as db:
+        ai_credit.charge_unbilled_runs(db)
+        db.commit()
+
+    assert balance_of("user", user_id) == charged, "a run is never charged twice"
+    account = client.get(f"/api/billing/accounts/user/{user_id}", headers=auth_headers).json()
+    assert Decimal(str(account["ai_balance_usd"])) == Decimal("-6")
+    assert [entry["kind"] for entry in account["ai_entries"]] == ["usage", "grant"]
+
+
+def test_the_price_list_shows_four_times_cost_for_every_priced_engine(client, auth_headers, billing_on):
+    prices = client.get("/api/billing/ai-prices").json()
+
+    engines = {engine["model"]: engine for engine in prices["engines"]}
+    assert engines, "every model is priced by the fixture"
+    gemini = engines["gemini-3.8-flash"]
+    assert (Decimal(str(gemini["input_per_mtok"])), Decimal(str(gemini["output_per_mtok"]))) == (
+        Decimal("4.00"),
+        Decimal("12.00"),
+    )
+    assert prices["own_keys_free"] is True
+
+
+def test_an_administrator_can_add_credit_by_hand(client, auth_headers, make_user, billing_on):
+    admin_email, admin_headers = make_user()
+    make_admin(admin_email)
+    user_id = client.get("/api/auth/me", headers=auth_headers).json()["id"]
+
+    refused = client.post(
+        "/api/admin/ai-credit",
+        json={"account_kind": "user", "account_id": user_id, "amount_usd": 25, "reason": "Invoice 42"},
+        headers=auth_headers,
+    )
+    granted = client.post(
+        "/api/admin/ai-credit",
+        json={"account_kind": "user", "account_id": user_id, "amount_usd": 25, "reason": "Invoice 42"},
+        headers=admin_headers,
+    )
+
+    assert refused.status_code == 403, "only administrators"
+    assert granted.status_code == 201, granted.text
+    assert Decimal(str(granted.json()["balance_usd"])) == Decimal("25")
+    listed = client.get(f"/api/admin/ai-credit/user/{user_id}", headers=admin_headers).json()
+    assert [(entry["kind"], entry["description"]) for entry in listed["entries"]] == [("grant", "Invoice 42")]
 
 
 def test_api_tokens_and_webhooks_need_a_plan_that_includes_them(client, auth_headers, billing_on):

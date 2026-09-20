@@ -14,7 +14,8 @@ Under **Settings → AI Provider Keys** you choose one of:
 - **Only the plan's included AI**: your saved keys are left unused, and AI work counts against your plan's AI credits.
 
 The choice is yours alone and applies to the AI tasks you start, in every project you work on. Other members of a
-project keep their own choice. Work on your own key never uses AI credits.
+project keep their own choice. Work on your own key is never charged by OmniReview; work on OmniReview's keys is paid
+from your AI balance at the prices on the pricing page.
 
 Add a key for each provider you want to use in the same panel. Keys are encrypted on the server and never shown again
 after saving. "Check key" asks the provider whether the key still works.
@@ -35,7 +36,9 @@ Instead, you can connect an S3-compatible bucket you control:
 - Wasabi
 - MinIO, or another S3-compatible service
 
-Files kept in your bucket do not count towards your plan's storage limit.
+Files kept in your bucket do not count towards your plan's storage limit. The plans include 100 MB (Free), 500 MB
+(Researcher), and 1 GB (Team); Institution customers connect their own bucket, so their storage is unlimited and their
+data stays in their own cloud.
 
 ### Where to set it
 

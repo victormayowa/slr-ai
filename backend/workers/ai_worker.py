@@ -128,6 +128,20 @@ async def move_stored_files(ctx: dict[str, Any]) -> None:
         logger.info("Moved %s stored file(s)", moved)
 
 
+def _charge_ai_runs() -> int:
+    from ai_credit import charge_unbilled_runs
+
+    with SessionLocal() as db:
+        charged = charge_unbilled_runs(db)
+        db.commit()
+        return charged
+
+
+async def charge_ai_usage(ctx: dict[str, Any]) -> None:
+    """Every minute: take what the AI run on the server's keys cost from the accounts' prepaid balances."""
+    await asyncio.to_thread(_charge_ai_runs)
+
+
 async def fail_abandoned_jobs(ctx: dict[str, Any]) -> None:
     """Mark jobs still running long after the timeout as failed, for example because their worker was killed."""
     cutoff = models.utcnow() - timedelta(seconds=JOB_TIMEOUT_SECONDS * 2)
@@ -158,6 +172,7 @@ class WorkerSettings:
         cron(carry_out_account_deletions, minute={20}),
         cron(reconcile_subscriptions, hour={2}, minute={40}),
         cron(move_stored_files, second={30}),
+        cron(charge_ai_usage, second={45}),
     ]
     on_startup = fail_abandoned_jobs
     queue_name = QUEUE_NAME

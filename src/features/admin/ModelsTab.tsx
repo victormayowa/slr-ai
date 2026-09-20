@@ -14,6 +14,9 @@ type AdminModel = {
   enabled: boolean;
   is_default: boolean;
   benchmark_status: string;
+  input_price_per_mtok: number | null;
+  output_price_per_mtok: number | null;
+  charged_per_mtok: { input_per_mtok: number | null; output_per_mtok: number | null };
   status_note: string;
   validated_prompts: string[];
   benchmarks: Record<string, { run_id: number; dataset: string; passed: boolean | null; metrics: Record<string, number | null> } | null>;
@@ -108,6 +111,36 @@ export function ModelsTab() {
               }, 'Could not mark the model exempt.')}>
                 Mark exempt
               </button>
+            </div>
+            <div style={{ ...row, marginTop: '4px', alignItems: 'center' }}>
+              <span style={muted}>What the provider charges, per million tokens:</span>
+              {(['input', 'output'] as const).map(side => (
+                <label key={side} style={{ ...muted, display: 'flex', gap: '4px', alignItems: 'center' }}>
+                  {side}
+                  <input
+                    className="search-input"
+                    aria-label={`${model.label} ${side} cost per million tokens`}
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    defaultValue={model[`${side}_price_per_mtok`] ?? ''}
+                    style={{ width: '90px', padding: '4px 6px' }}
+                    onBlur={e => {
+                      const raw = e.target.value.trim();
+                      const value = raw === '' ? null : Number(raw);
+                      if (value === (model[`${side}_price_per_mtok`] ?? null)) return;
+                      act(async () => {
+                        await apiRequest('PATCH', `/api/admin/models/${model.id}`, { [`${side}_price_per_mtok`]: value });
+                      }, 'Could not save the price.');
+                    }}
+                  />
+                </label>
+              ))}
+              <span style={muted}>
+                {model.charged_per_mtok.input_per_mtok !== null
+                  ? `Customers pay $${model.charged_per_mtok.input_per_mtok} in / $${model.charged_per_mtok.output_per_mtok} out`
+                  : 'No price: this model can only be used with a reviewer\'s own key'}
+              </span>
             </div>
             {model.status_note && <p style={muted}>{model.status_note}</p>}
             {model.purpose === 'chat' && (

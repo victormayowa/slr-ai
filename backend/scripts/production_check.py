@@ -17,9 +17,10 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+import entitlements
 import models
 import ops
 from ops import Check
@@ -140,6 +141,8 @@ def configuration_checks() -> list[Check]:
             else "AI uses a user's own key first, then the server's provider keys, which count against AI credits",
         )
     )
+    markup = env("AI_PRICE_MARKUP") or "4"
+    checks.append(Check("ai_markup", "ok", f"AI on the server's keys is charged at {markup}x what the provider bills"))
     provider = env("BILLING_PROVIDER") or "manual"
     add(
         "billing_provider",
@@ -190,6 +193,24 @@ def database_checks(db: Session) -> list[Check]:
         if demo
         else Check("demo_accounts", "ok", "No demo accounts")
     )
+    # A model with no price can't be charged for, so it can only be used with a reviewer's own key.
+    unpriced = db.scalars(
+        select(models.AIModel.label).where(
+            models.AIModel.enabled.is_(True),
+            or_(models.AIModel.input_price_per_mtok.is_(None), models.AIModel.output_price_per_mtok.is_(None)),
+        )
+    ).all()
+    if entitlements.billing_enabled() and unpriced:
+        checks.append(
+            Check(
+                "ai_prices",
+                "fail",
+                f"{len(unpriced)} enabled model(s) have no price, so they can only be used with a reviewer's own "
+                f"key: {', '.join(sorted(unpriced)[:5])}. Set them in Admin -> AI models.",
+            )
+        )
+    else:
+        checks.append(Check("ai_prices", "ok", "Every enabled model has a price"))
     default_model = db.scalar(
         select(models.AIModel).where(models.AIModel.is_default.is_(True), models.AIModel.purpose == "chat")
     )

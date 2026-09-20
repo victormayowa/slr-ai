@@ -2,6 +2,7 @@
 the provider's webhooks. Administrators assign plans in admin_console_routes.py."""
 
 import logging
+from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -9,9 +10,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import ai_credit
 import billing
 import entitlements
 import models
+from ai_catalog import ai_model_out, catalog_models
 from auth_routes import get_current_user
 from database import get_db
 from entitlements import Account
@@ -109,6 +112,17 @@ def account_out(db: Session, account: Account) -> dict:
         ),
         "usage": entitlements.usage(db, account),
         "usage_resets_on": entitlements.next_month_start(),
+        "ai_balance_usd": ai_credit.balance(db, account),
+        "ai_entries": [
+            {
+                "id": entry.id,
+                "kind": entry.kind,
+                "amount_usd": entry.amount_usd,
+                "description": entry.description,
+                "created_at": entry.created_at,
+            }
+            for entry in ai_credit.entries(db, account, limit=20)
+        ],
         **config_out(),
     }
 
@@ -184,6 +198,69 @@ def start_checkout(
             existing=existing,
         )
         return {"url": chosen.checkout(request), "kind": "checkout"}
+    except billing.BillingError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/ai-prices")
+def ai_prices(db: Session = Depends(get_db)):
+    """What each AI engine costs on the server's keys. No sign-in needed: it belongs on the pricing page.
+
+    Work on your own API key is never charged here; the provider bills you directly.
+    """
+    engines = []
+    for model in catalog_models(db, purpose=None):
+        prices = ai_credit.model_prices(model)
+        if prices["input_per_mtok"] is None:
+            continue
+        engines.append(
+            {
+                "provider": model.provider,
+                "provider_label": ai_model_out(model)["provider_label"],
+                "model": model.model_id,
+                "label": model.label,
+                "purpose": model.purpose,
+                "data_location": ai_model_out(model)["data_location"],
+                **prices,
+            }
+        )
+    return {
+        "engines": engines,
+        "currency": "USD",
+        "unit": "per million tokens",
+        "own_keys_free": True,
+        "platform_ai_keys": platform_keys_enabled(),
+    }
+
+
+class TopUpIn(BaseModel):
+    # Whole dollars, enough to matter and not so much that a mistyped amount is painful.
+    amount_usd: int = Field(ge=5, le=5000)
+
+
+@router.post("/accounts/{kind}/{account_id}/ai-credit/checkout")
+def start_ai_topup(
+    kind: str,
+    account_id: int,
+    body: TopUpIn,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """A link to pay for AI credit. The balance moves when the payment is confirmed, not when the link is made."""
+    account = _account(db, user, kind, account_id)
+    try:
+        chosen = billing.provider()
+        return {
+            "url": chosen.topup(
+                billing.TopUpRequest(
+                    account=account,
+                    amount_usd=Decimal(body.amount_usd),
+                    email=billing.account_email(db, account, user),
+                    success_url=billing.app_url("/billing?topup=success"),
+                    cancel_url=billing.app_url("/billing?topup=cancelled"),
+                )
+            )
+        }
     except billing.BillingError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

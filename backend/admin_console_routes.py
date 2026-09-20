@@ -3,6 +3,7 @@ readiness, AI costs, and recent failures. The model catalog and benchmarks are i
 
 import logging
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -11,6 +12,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import ai_credit
 import entitlements
 import models
 import ops
@@ -108,6 +110,57 @@ def update_plan(plan_id: int, body: PlanIn, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=409, detail="A plan with that code already exists") from None
     return admin_plan_out(db, plan)
+
+
+class CreditGrant(BaseModel):
+    account_kind: Literal["user", "organization"]
+    account_id: int
+    # Positive adds credit, negative takes it back; both are recorded with the reason.
+    amount_usd: Decimal = Field(ge=-100000, le=100000)
+    reason: str = Field(min_length=3, max_length=300)
+
+
+@router.get("/ai-credit/{kind}/{account_id}")
+def admin_ai_credit(kind: Literal["user", "organization"], account_id: int, db: Session = Depends(get_db)):
+    """One account's AI balance and what has moved it."""
+    account = Account(kind, account_id)
+    return {
+        "account": {"kind": kind, "id": account_id, "label": entitlements.account_label(db, account)},
+        "balance_usd": ai_credit.balance(db, account),
+        "entries": [
+            {
+                "id": entry.id,
+                "kind": entry.kind,
+                "amount_usd": entry.amount_usd,
+                "description": entry.description,
+                "created_at": entry.created_at,
+            }
+            for entry in ai_credit.entries(db, account)
+        ],
+    }
+
+
+@router.post("/ai-credit", status_code=201)
+def admin_grant_ai_credit(
+    body: CreditGrant, admin: models.User = Depends(require_admin), db: Session = Depends(get_db)
+):
+    """Add or take back AI credit by hand: invoiced customers, goodwill, or correcting a mistake."""
+    if body.amount_usd == 0:
+        raise HTTPException(status_code=422, detail="Give an amount to add or take back")
+    account = Account(body.account_kind, body.account_id)
+    if entitlements.account_label(db, account).startswith(("User ", "Organization ")):
+        raise HTTPException(status_code=404, detail="Account not found")
+    entry = ai_credit.add_entry(
+        db,
+        account,
+        kind="grant",
+        amount_usd=body.amount_usd,
+        description=body.reason,
+        created_by_id=admin.id,
+    )
+    db.commit()
+    logger.info("Administrator %s changed the AI credit of %s by %s", admin.id, account.key, body.amount_usd)
+    return {"id": entry.id if entry else None, "balance_usd": ai_credit.balance(db, account)}
 
 
 # --- Subscriptions ---

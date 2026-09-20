@@ -9,6 +9,7 @@ import asyncio
 import logging
 import random
 from collections import Counter
+from decimal import Decimal
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -16,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+import ai_credit
 import benchmarks
 import models
 from agreement import wilson_interval
@@ -52,12 +54,18 @@ class ModelUpdate(BaseModel):
     is_default: bool | None = None
     benchmark_status: Literal["unvalidated", "passed", "failed", "exempt"] | None = None
     status_note: str | None = Field(None, max_length=2000)
+    # What the provider charges, in US dollars per million tokens. Customers pay a multiple of it (ai_credit.py).
+    input_price_per_mtok: Decimal | None = Field(None, ge=0, le=10000)
+    output_price_per_mtok: Decimal | None = Field(None, ge=0, le=10000)
 
 
 def admin_model_out(db: Session, model: models.AIModel) -> dict:
     runs = benchmarks.latest_runs(db, model) if model.purpose == "chat" else {}
     return {
         **ai_model_out(model),
+        "input_price_per_mtok": model.input_price_per_mtok,
+        "output_price_per_mtok": model.output_price_per_mtok,
+        "charged_per_mtok": ai_credit.model_prices(model),
         "benchmark_status": model.benchmark_status,
         "validated_prompts": model.validated_prompts,
         "status_note": model.status_note,
@@ -97,7 +105,8 @@ def admin_update_model(
     admin: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Enable a model, make it the default for its purpose, or mark it exempt from benchmarking with a note."""
+    """Enable a model, make it the default for its purpose, set what the provider charges for it, or mark it exempt
+    from benchmarking with a note."""
     model = db.get(models.AIModel, model_id)
     if model is None:
         raise HTTPException(status_code=404, detail="Model not found")

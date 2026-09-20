@@ -23,6 +23,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any, Protocol
 
 import requests
@@ -30,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import ai_credit
 import models
 import notifications
 from entitlements import Account, account_label, subscription_for
@@ -58,9 +60,20 @@ class CheckoutRequest:
 
 
 @dataclass
+class TopUpRequest:
+    """Buying AI credit: a one-off payment, not a subscription."""
+
+    account: Account
+    amount_usd: Decimal
+    email: str
+    success_url: str
+    cancel_url: str
+
+
+@dataclass
 class ProviderEvent:
     """A provider's webhook, normalized. `type` is one of: subscription.updated, subscription.deleted,
-    checkout.completed, payment.failed, or ignored."""
+    checkout.completed, credit.purchased, payment.failed, or ignored."""
 
     event_id: str
     type: str
@@ -74,6 +87,8 @@ class ProviderEvent:
     cancel_at_period_end: bool = False
     customer_id: str = ""
     subscription_id: str = ""
+    # Set on credit.purchased: the AI credit that was paid for, in US dollars.
+    amount_usd: Decimal | None = None
     payload: dict[str, Any] = field(default_factory=dict)
 
 
@@ -84,6 +99,8 @@ class BillingProvider(Protocol):
     def configured(self) -> bool: ...
 
     def checkout(self, request: CheckoutRequest) -> str: ...
+
+    def topup(self, request: TopUpRequest) -> str: ...
 
     def portal(self, subscription: models.Subscription, return_url: str) -> str: ...
 
@@ -108,6 +125,9 @@ class ManualProvider:
 
     def checkout(self, request: CheckoutRequest) -> str:
         raise BillingError("Plans on this server are arranged directly with us. Contact support to change plan.")
+
+    def topup(self, request: TopUpRequest) -> str:
+        raise BillingError("AI credit on this server is added by an administrator. Contact support.")
 
     def portal(self, subscription: models.Subscription, return_url: str) -> str:
         raise BillingError("Billing on this server is handled by invoice. Contact support about payments.")
@@ -147,6 +167,16 @@ class DevProvider:
         encoded = base64.urlsafe_b64encode(json.dumps(session, sort_keys=True).encode()).decode()
         return app_url(f"/billing/dev-checkout?session={encoded}.{_sign(encoded.encode())}")
 
+    def topup(self, request: TopUpRequest) -> str:
+        session = {
+            "account": request.account.key,
+            "kind": "topup",
+            "amount_usd": str(request.amount_usd),
+            "expires": int(time.time()) + DEV_SESSION_SECONDS,
+        }
+        encoded = base64.urlsafe_b64encode(json.dumps(session, sort_keys=True).encode()).decode()
+        return app_url(f"/billing/dev-checkout?session={encoded}.{_sign(encoded.encode())}")
+
     def portal(self, subscription: models.Subscription, return_url: str) -> str:
         return return_url
 
@@ -162,6 +192,15 @@ class DevProvider:
     def completion_webhook(self, token: str, outcome: str) -> tuple[bytes, dict[str, str]]:
         """The signed webhook a real provider would send when this checkout is paid (or its payment fails)."""
         session = self.read_session(token)
+        if session.get("kind") == "topup":
+            event = {
+                "id": f"evt_dev_{secrets.token_hex(8)}",
+                "type": "credit.purchased" if outcome == "paid" else "payment.failed",
+                "account": session["account"],
+                "amount_usd": session["amount_usd"],
+            }
+            body = json.dumps(event).encode()
+            return body, {"x-dev-signature": _sign(body)}
         account = session["account"].replace(":", "_")
         period_days = 366 if session["interval"] == "year" else 31
         event = {
@@ -196,6 +235,7 @@ class DevProvider:
             else None,
             customer_id=event.get("customer", ""),
             subscription_id=event.get("subscription", ""),
+            amount_usd=Decimal(event["amount_usd"]) if event.get("amount_usd") else None,
             payload=event,
         )
 
@@ -288,6 +328,24 @@ class StripeProvider:
             data["customer_email"] = request.email
         return str(self._request("POST", "checkout/sessions", data)["url"])
 
+    def topup(self, request: TopUpRequest) -> str:
+        amount_cents = int(request.amount_usd * 100)
+        data: dict[str, Any] = {
+            "mode": "payment",
+            "success_url": request.success_url,
+            "cancel_url": request.cancel_url,
+            "client_reference_id": request.account.key,
+            "customer_email": request.email,
+            "line_items[0][quantity]": 1,
+            "line_items[0][price_data][currency]": "usd",
+            "line_items[0][price_data][unit_amount]": str(amount_cents),
+            "line_items[0][price_data][product_data][name]": "OmniReview AI credit",
+            "metadata[account]": request.account.key,
+            "metadata[purpose]": "ai_credit",
+            "metadata[amount_usd]": str(request.amount_usd),
+        }
+        return str(self._request("POST", "checkout/sessions", data)["url"])
+
     def portal(self, subscription: models.Subscription, return_url: str) -> str:
         if not subscription.provider_customer_id:
             raise BillingError("There is no payment account to manage yet")
@@ -328,6 +386,16 @@ class StripeProvider:
             )
         if kind == "checkout.session.completed":
             metadata = obj.get("metadata") or {}
+            if metadata.get("purpose") == "ai_credit":
+                # Paid AI credit. The amount comes from what Stripe collected, not from what we asked for.
+                paid = obj.get("amount_total")
+                return ProviderEvent(
+                    type="credit.purchased",
+                    account=Account.parse(metadata.get("account") or obj.get("client_reference_id") or ""),
+                    amount_usd=(Decimal(paid) / 100) if paid is not None else None,
+                    customer_id=obj.get("customer") or "",
+                    **base,
+                )
             return ProviderEvent(
                 type="checkout.completed",
                 account=Account.parse(metadata.get("account") or obj.get("client_reference_id") or ""),
@@ -417,6 +485,25 @@ def apply_event(db: Session, provider_name: str, event: ProviderEvent) -> str:
         )
     if subscription is None and event.account is not None:
         subscription = subscription_for(db, event.account)
+    if event.type == "credit.purchased":
+        if event.account is None or event.amount_usd is None or event.amount_usd <= 0:
+            raise BillingError("A credit payment arrived without an account or an amount")
+        added = ai_credit.add_entry(
+            db,
+            event.account,
+            kind="topup",
+            amount_usd=event.amount_usd,
+            description=f"AI credit paid for ({provider_name})",
+            reference=f"payment:{event.event_id}",
+        )
+        if added is not None:
+            notify_account(
+                db,
+                event.account,
+                "Your AI credit is topped up",
+                f"${event.amount_usd:.2f} was added. It pays for AI run on OmniReview's keys.",
+            )
+        return "processed"
     if event.type == "checkout.completed":
         if subscription is not None and event.customer_id:
             subscription.provider_customer_id = event.customer_id

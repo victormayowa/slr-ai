@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import ai_credit
 import crypto
 import entitlements
 import models
@@ -102,18 +103,22 @@ def key_available(saved_providers: Collection[str], provider: str, user: models.
 
 
 def project_ai(db: Session, access: ProjectAccess) -> AIContext:
-    ai = resolve_ai(db, access.project.ai_model, access.user)
-    if ai.key_source == "platform":
+    model = access.project.ai_model
+    ai = resolve_ai(db, model, access.user)
+    if ai.key_source == "platform" and model is not None:
         entitlements.require_ai(db, access.project, ai.provider.id)
+        ai_credit.require_balance(db, access.project, model)
     return ai
 
 
 def project_embedding_ai(db: Session, access: ProjectAccess) -> AIContext:
     if access.project.embedding_model is None:
         raise HTTPException(status_code=409, detail="Choose an embedding model for this project first")
-    ai = resolve_ai(db, access.project.embedding_model, access.user)
+    model = access.project.embedding_model
+    ai = resolve_ai(db, model, access.user)
     if ai.key_source == "platform":
         entitlements.require_ai(db, access.project, ai.provider.id)
+        ai_credit.require_balance(db, access.project, model)
     return ai
 
 

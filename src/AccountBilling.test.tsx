@@ -9,12 +9,12 @@ const LOGIN = { access_token: 'token-123', token_type: 'bearer', user: { id: 1, 
 const ME = { id: 1, email: 'lead@omnireview.test', name: 'Liam Lead', is_platform_admin: false, email_verified: true, mfa_enabled: false, terms_version: 'v1', current_terms_version: 'v1', organizations: [] };
 const LIMIT_LABELS = {
   projects: 'projects', members_per_project: 'members in a project', records_per_month: 'records added this month',
-  ai_credits_per_month: 'AI credits this month', storage_mb: 'MB of stored documents', living_schedules: 'active surveillance schedules',
+  storage_mb: 'MB of stored documents', living_schedules: 'active surveillance schedules',
   compute_minutes_per_month: 'minutes of analysis compute this month',
 };
 const plan = (code: string, name: string, monthly: number | null, projects: number | null) => ({
   code, name, description: `${name} plan`, monthly_price_cents: monthly, yearly_price_cents: monthly === null ? null : monthly * 10, currency: 'USD',
-  limits: { projects, members_per_project: 5, records_per_month: 2000, ai_credits_per_month: 200, storage_mb: 500, living_schedules: 0, compute_minutes_per_month: 30, api_access: code !== 'free', webhooks: false },
+  limits: { projects, members_per_project: 5, records_per_month: 2000, storage_mb: 500, living_schedules: 0, compute_minutes_per_month: 30, api_access: code !== 'free', webhooks: false },
   online_intervals: [],
 });
 const CONFIG = { enabled: true, provider: 'dev', provider_label: 'Simulated payments (development)', checkout_available: true, limit_labels: LIMIT_LABELS, feature_labels: { api_access: 'API access with personal tokens', webhooks: 'webhooks' }, platform_ai_keys: true };
@@ -143,6 +143,32 @@ describe('Accounts and billing', () => {
     expect(screen.getAllByRole('button', { name: 'Create an account' }).length).toBeGreaterThan(0);
   });
 
+  it('shows the AI balance and starts a top-up', async () => {
+    const fetchMock = mockApi({
+      'POST /api/auth/login': LOGIN,
+      'GET /api/billing/accounts': [{ kind: 'user', id: 1, label: 'Liam Lead', plan: 'Free' }],
+      'GET /api/billing/accounts/user/1': {
+        ...CONFIG, kind: 'user', id: 1, label: 'Liam Lead', plan: plan('free', 'Free', 0, 1), subscription: null,
+        usage: { projects: 1, members_per_project: 2, records_per_month: 10, storage_mb: 3, living_schedules: 0, compute_minutes_per_month: 0 },
+        usage_resets_on: '2026-10-01T00:00:00Z',
+        ai_balance_usd: 12.5,
+        ai_entries: [{ id: 1, kind: 'usage', amount_usd: -1.5, description: 'gemini gemini-3.8-flash (screening)', created_at: '2026-09-20T09:00:00Z' }],
+      },
+      'GET /api/billing/plans': PLANS,
+      'POST /api/billing/accounts/user/1/ai-credit/checkout': { url: 'https://pay.example.org/topup' },
+    });
+    renderApp('/billing');
+    fillSignIn();
+
+    const balance = await screen.findByRole('region', { name: 'AI balance' });
+    expect(within(balance).getByText('$12.50')).toBeTruthy();
+    expect(within(balance).getByText(/gemini-3.8-flash/)).toBeTruthy();
+    fireEvent.click(within(balance).getByRole('button', { name: 'Add $25.00' }));
+
+    await vi.waitFor(() =>
+      expect(body(fetchMock, 'POST', '/api/billing/accounts/user/1/ai-credit/checkout')).toEqual({ amount_usd: 25 }),
+    );
+  });
   it('leaves AI credits off the plans when the server uses only users\' own AI keys', async () => {
     mockApi({ 'GET /api/billing/plans': { ...PLANS, platform_ai_keys: false } });
     renderApp('/pricing');
@@ -155,8 +181,10 @@ describe('Accounts and billing', () => {
   it('shows usage against the plan and starts a checkout', async () => {
     const account = {
       ...CONFIG, kind: 'user', id: 1, label: 'Liam Lead', plan: plan('free', 'Free', 0, 1), subscription: null,
-      usage: { projects: 1, members_per_project: 2, records_per_month: 1900, ai_credits_per_month: 12.5, storage_mb: 3, living_schedules: 0, compute_minutes_per_month: 0 },
+      usage: { projects: 1, members_per_project: 2, records_per_month: 1900, storage_mb: 3, living_schedules: 0, compute_minutes_per_month: 0 },
       usage_resets_on: '2026-10-01T00:00:00Z',
+      ai_balance_usd: 12.5,
+      ai_entries: [{ id: 1, kind: 'usage' as const, amount_usd: -1.5, description: 'gemini gemini-3.8-flash (screening)', created_at: '2026-09-20T09:00:00Z' }],
     };
     const fetchMock = mockApi({
       'POST /api/auth/login': LOGIN,

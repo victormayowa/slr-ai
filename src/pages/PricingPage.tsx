@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { limitText, price, shownLimits, type PublicPlans } from '../api/account';
+import { limitText, money, price, shownLimits, type AiPriceList, type PublicPlans } from '../api/account';
 import { errorMessage, requestJson } from '../api/client';
 import { useAuth } from '../auth/authContext';
 import { LegalLinks } from '../components/LegalLinks';
@@ -12,6 +12,7 @@ export function PricingPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<PublicPlans | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [prices, setPrices] = useState<AiPriceList | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,6 +23,11 @@ export function PricingPage() {
       .catch(err => {
         if (!cancelled) setProblem(errorMessage(err, 'Plans could not be loaded.'));
       });
+    requestJson('GET', '/api/billing/ai-prices')
+      .then((data: AiPriceList) => {
+        if (!cancelled) setPrices(data);
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -72,7 +78,40 @@ export function PricingPage() {
         })}
       </div>
       <div style={{ marginTop: '32px' }}>
-        <LegalLinks />
+        {prices && prices.engines.length > 0 && (
+        <section aria-label="AI engine prices" style={{ width: '100%', maxWidth: '900px', marginTop: '40px' }}>
+          <h2 style={{ fontSize: '1.4rem' }}>AI engine prices</h2>
+          <p style={muted}>
+            What each engine costs when it runs on OmniReview's keys, {prices.unit}, paid from your AI balance.
+            {prices.own_keys_free ? ' Add your own provider key in Settings and that work is never charged here.' : ''}
+          </p>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '8px' }}>Engine</th>
+                <th style={{ padding: '8px' }}>Processed by</th>
+                <th style={{ padding: '8px', textAlign: 'right' }}>Input</th>
+                <th style={{ padding: '8px', textAlign: 'right' }}>Output</th>
+              </tr>
+            </thead>
+            <tbody>
+              {prices.engines.map(engine => (
+                <tr key={`${engine.provider}/${engine.model}`}>
+                  <td style={{ padding: '8px' }}>
+                    {engine.label}
+                    {engine.purpose === 'embedding' ? ' (similarity)' : ''}
+                  </td>
+                  <td style={{ padding: '8px', color: 'var(--text-secondary)' }}>{engine.data_location ?? engine.provider_label}</td>
+                  <td style={{ padding: '8px', textAlign: 'right' }}>{money(engine.input_per_mtok)}</td>
+                  <td style={{ padding: '8px', textAlign: 'right' }}>{money(engine.output_per_mtok)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      <LegalLinks />
       </div>
     </div>
   );

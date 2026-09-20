@@ -1,5 +1,21 @@
 # Plans, billing, and your account
 
+## Paying for AI
+
+AI you run on your own provider key is never charged by OmniReview: your provider bills you directly, and you can
+choose under Settings to use only your own keys.
+
+AI run on OmniReview's keys is paid from your **AI balance**, a prepaid amount you top up under Billing. Each engine
+has a published price per million tokens, listed on the [pricing page](../pricing): it is four times what the provider
+charges us, so cheaper engines stay cheaper for you and the choice of engine is yours. A screening run of a few
+thousand records on a small model costs cents; a long manuscript draft on a premium model costs more.
+
+- Every AI task shows which engine it used, and each charge appears on the Billing page with the run that caused it.
+- When the balance runs out, AI on OmniReview's keys stops with a message, and everything else keeps working. Top up,
+  or add your own provider key, and it resumes.
+- Invoiced customers can have credit added by an administrator instead of paying online.
+- A model with no price set can only be used with your own key.
+
 ## Plans and limits
 
 Each billing account has a plan: your personal account, or an organization you belong to. A project counts against
@@ -10,8 +26,7 @@ Plans limit:
 - **Projects** you can own.
 - **Members in a project.** Invitations count when they are sent.
 - **Records added each month** by searches and imports.
-- **AI credits each month.** One credit is 1,000 tokens used with the server's AI keys. Work done with your own API key
-  (saved under Settings) never uses credits, and you can choose to use only your own keys.
+- **Storage** is included per plan; files you keep in your own bucket don't count (see below).
 - **Stored documents** (full texts, uploads, and plots), in MB. Files kept in your own storage bucket don't count; see
   [Your own AI keys and your own storage](your-keys-and-storage.md).
 - **Active surveillance schedules** for living reviews.
