@@ -6,12 +6,12 @@ Everything comes from what the project records. Gaps are marked [TO COMPLETE] ra
 from dataclasses import dataclass, field
 from io import BytesIO
 
-from docx import Document
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 import models
 from ai_catalog import model_ref
+from docx_style import styled_document
 from protocol_design import project_criteria, project_sections
 from protocol_frameworks import (
     FRAMEWORKS,
@@ -185,7 +185,7 @@ def to_markdown(title: str, blocks: list[Block]) -> str:
 
 
 def to_docx(title: str, blocks: list[Block]) -> bytes:
-    document = Document()
+    document = styled_document()
     document.add_heading(title, level=0)
     for block in blocks:
         document.add_heading(block.heading, level=1)

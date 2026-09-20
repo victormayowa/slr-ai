@@ -12,7 +12,6 @@ from collections import Counter, defaultdict
 from datetime import date, timedelta
 from typing import Any, Literal
 
-from docx import Document as WordDocument
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -27,6 +26,7 @@ from agreement import cohens_kappa
 from audit import record_event
 from auth_routes import get_current_user
 from database import get_db
+from docx_style import styled_document
 from permissions import Permission, ProjectRole
 from projects_routes import (
     ProjectAccess,
@@ -968,7 +968,7 @@ def team_audit_report(
     }
     if format == "json":
         return report
-    document = WordDocument()
+    document = styled_document()
     document.add_heading(f"Team audit report: {access.project.title}", level=1)
     document.add_paragraph(f"Generated {report['generated_at']:%Y-%m-%d %H:%M} UTC")
     document.add_heading("Members and declarations", level=2)

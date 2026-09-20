@@ -9,7 +9,6 @@ import io
 import re
 from typing import Any, Literal
 
-from docx import Document
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -21,6 +20,7 @@ from ai_access import new_ai_run, project_ai, record_usage
 from audit import record_event
 from citation_chasing import resolve_openalex_ids
 from database import get_db
+from docx_style import styled_document
 from extraction_data import included_studies
 from llm.prompts import PLAIN_LANGUAGE_PROMPT
 from llm.runner import complete_structured
@@ -515,7 +515,7 @@ def get_summary_of_findings(
             media_type="text/csv",
             headers={"Content-Disposition": 'attachment; filename="summary-of-findings.csv"'},
         )
-    document = Document()
+    document = styled_document()
     document.add_heading(f"Summary of findings: {access.project.title}", level=1)
     question = access.project.protocol.question if access.project.protocol else ""
     if question:

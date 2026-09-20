@@ -11,7 +11,6 @@ from typing import Literal
 from urllib.parse import urlparse
 
 import requests
-from docx import Document
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -23,6 +22,7 @@ from audit import record_event
 from certainty_routes import summary_of_findings
 from database import get_db
 from document_parsing import ParseError, detect_kind, parse_document
+from docx_style import styled_document
 from extraction_data import included_records
 from llm.prompts import COVER_LETTER_PROMPT, GUIDELINE_PROMPT, RESPONSE_LETTER_PROMPT, REVIEW_COMMENTS_PROMPT
 from manuscript_state import approval_state, get_manuscript, latest_version, version_content
@@ -1264,7 +1264,7 @@ def response_letter_docx(
     db: Session = Depends(get_db),
 ):
     row = _round(db, access, round_id)
-    document = Document()
+    document = styled_document()
     document.add_heading(f"Response to reviewers (round {row.round_number})", level=1)
     for paragraph in (row.response_letter or "").split("\n\n"):
         document.add_paragraph(paragraph)

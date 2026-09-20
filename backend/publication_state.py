@@ -9,7 +9,6 @@ import zipfile
 from collections.abc import Mapping
 from typing import Any
 
-from docx import Document
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,6 +16,7 @@ import models
 from claims import CITATION, EMBED, EVIDENCE, embeds
 from code_export import bundle_files
 from dataset_export import to_csv, to_json, to_xlsx
+from docx_style import styled_document
 from evidence_catalog import approved_analyses
 from manuscript_assets import figure, table
 from manuscript_checklists import CHECKLISTS, applicable, checklist_context, complete, evaluate
@@ -332,7 +332,7 @@ def blocking(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _docx(paragraphs: list[tuple[str, str]]) -> bytes:
-    document = Document()
+    document = styled_document()
     for style, text in paragraphs:
         if style.startswith("h"):
             document.add_heading(text, level=int(style[1:]))

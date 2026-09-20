@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from docx import Document as WordDocument
 from docx.shared import Inches
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,6 +25,7 @@ from sqlalchemy.orm import Session
 import citations
 import models
 from claims import CITATION, CITATION_ID, EMBED, EVIDENCE
+from docx_style import reference_docx, styled_document
 from manuscript_assets import Table, figure, table
 from publishing_tools import tool_path
 
@@ -183,7 +183,7 @@ def _zip(files: dict[str, bytes]) -> bytes:
 
 def _simple_docx(document: BuiltDocument) -> bytes:
     """A plain Word document when Pandoc isn't installed: headings, paragraphs, tables, and PNG figures."""
-    word = WordDocument()
+    word = styled_document()
     lines = document.markdown.split("\n---\n", 1)[-1].splitlines()
     table_rows: list[list[str]] = []
 
@@ -242,6 +242,8 @@ def _run_pandoc(document: BuiltDocument, fmt: str) -> bytes:
         env["PATH"] = os.pathsep.join([*tool_dirs, env.get("PATH", "")])
         if fmt == "docx":
             output = "manuscript.docx"
+            # The same house style as every other Word document: Times New Roman, 1.5 spacing, black text.
+            args += ["--reference-doc", str(reference_docx())]
         elif fmt == "tex":
             output = "manuscript.tex"
             args.append("--standalone")

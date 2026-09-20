@@ -67,8 +67,17 @@ def test_a_locked_protocol_exports_its_version_and_structured_content(client, pr
     assert "PubMed: aspirin[tiab]" in markdown
     assert "| Myocardial infarction | Primary |  |  |" in markdown
     assert word.headers["content-disposition"].endswith('-v1.docx"')
-    headings = [p.text for p in Document(BytesIO(word.content)).paragraphs if p.style.name.startswith("Heading")]
+    exported = Document(BytesIO(word.content))
+    headings = [p.text for p in exported.paragraphs if p.style.name.startswith("Heading")]
     assert "Review question (PICO)" in headings
+    # Every Word document OmniReview produces is in the house style (docx_style.py).
+    for name in ("Normal", "Heading 1"):
+        style = exported.styles[name]
+        assert (style.font.name, str(style.font.color.rgb), style.paragraph_format.line_spacing) == (
+            "Times New Roman",
+            "000000",
+            1.5,
+        )
     event = client.get(url(project_id, "audit"), headers=headers).json()["events"][0]
     assert (event["action"], event["details"]) == ("protocol.exported", {"format": "docx", "protocol_version": 1})
 

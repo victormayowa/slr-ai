@@ -11,7 +11,6 @@ import re
 from datetime import timedelta
 from typing import Literal
 
-from docx import Document
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -23,6 +22,7 @@ from ai_access import new_ai_run, project_ai, record_usage
 from audit import record_event
 from claims import ACKNOWLEDGEABLE, check_content, sentence_hash, split_sentences
 from database import get_db
+from docx_style import styled_document
 from evidence_catalog import build_catalog, latest_snapshot
 from extraction_data import included_studies
 from llm.prompts import LANGUAGE_EDIT_PROMPT, MANUSCRIPT_DRAFT_PROMPT, MANUSCRIPT_EXTRAS_PROMPT
@@ -1303,7 +1303,7 @@ def export_checklist(
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="{key}-checklist.csv"'},
         )
-    document = Document()
+    document = styled_document()
     document.add_heading(f"{data['label']} checklist: {manuscript.title}", level=1)
     document.add_paragraph(data["reference"])
     grid = document.add_table(rows=1, cols=len(header))
