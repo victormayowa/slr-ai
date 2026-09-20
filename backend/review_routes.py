@@ -9,16 +9,20 @@ from sqlalchemy.orm import Session
 
 import models
 from ai_access import new_ai_run, project_ai, record_usage
+from ai_suggestions import run_suggestion, suggestion_out
 from audit import record_event
 from database import get_db
-from llm.prompts import PROTOCOL_PROMPT
+from llm.prompts import PROTOCOL_PROMPT, SEARCH_DATABASES_PROMPT, SEARCH_STRINGS_PROMPT
 from permissions import Permission
 from projects_routes import ProjectAccess, get_in_project, project_access
+from protocol_design import protocol_context
 from protocol_frameworks import FRAMEWORKS, criterion_element_keys
 from rate_limiting import ai_rate_limit
 from search_quality import record_strategy_version
+from search_sources import normalize_database_name
 from services.ai_protocol import generate_protocol_elements
 from services.ai_screening import ROB_TOOL_DOMAINS
+from services.ai_search_plan import availability, suggest_search_databases, write_search_strings
 from services.errors import LLMError
 from workflow import WorkflowError, require_stage_open
 
@@ -102,7 +106,23 @@ def _checked_element(project: models.Project, element: str | None) -> str | None
 
 
 def strategy_out(strategy: models.SearchStrategy) -> dict:
-    return {"id": strategy.id, "database": strategy.database, "query": strategy.query, "version": strategy.version}
+    """A strategy with where it can be searched and what its searches have retrieved so far, so reviewers can see at
+    a glance which databases are done and which still need running or importing."""
+    runs = sorted(strategy.runs, key=lambda run: run.id)
+    latest = runs[-1] if runs else None
+    where = availability(strategy.database)
+    return {
+        "id": strategy.id,
+        "database": strategy.database,
+        "query": strategy.query,
+        "version": strategy.version,
+        "searchable": where["searchable"],
+        "where_to_search": where["note"],
+        "runs": len(runs),
+        "records_retrieved": sum(run.result_count for run in runs),
+        "last_searched_on": (latest.searched_on or latest.executed_at.date().isoformat()) if latest else None,
+        "last_search_version": latest.strategy_version if latest else None,
+    }
 
 
 def _strategy_change_note(db: Session, project_id: int, note: str | None) -> str | None:
@@ -410,6 +430,73 @@ def update_search_strategy(
     record_strategy_version(db, strategy, access.user.id, note)
     db.commit()
     return strategy_out(strategy)
+
+
+class DatabaseChoice(BaseModel):
+    databases: list[str] = Field(min_length=1, max_length=10)
+
+
+@router.post("/search-databases/ai", dependencies=[Depends(ai_rate_limit)])
+async def suggest_databases(
+    access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)), db: Session = Depends(get_db)
+):
+    """Suggest which sources this review should search, with why each suits the question. Reviewers choose from it."""
+    require_stage_open(db, access.project.id, "protocol")
+    protocol = access.project.protocol
+    if protocol is None or not (protocol.question.strip() or protocol.description.strip()):
+        raise HTTPException(status_code=400, detail="Write the review question first, or describe the study in Setup")
+    context = protocol_context(db, access.project)
+    suggestion = await run_suggestion(
+        db, access, "search_databases", SEARCH_DATABASES_PROMPT, lambda ai: suggest_search_databases(ai, context)
+    )
+    return suggestion_out(suggestion)
+
+
+@router.post("/search-strategies/ai", status_code=201, dependencies=[Depends(ai_rate_limit)])
+async def draft_search_strategies(
+    body: DatabaseChoice,
+    access: ProjectAccess = Depends(project_access(Permission.EDIT_PROTOCOL)),
+    db: Session = Depends(get_db),
+):
+    """Write a search string for each database the reviewers agreed on, and add it as an editable strategy."""
+    note = _strategy_change_note(db, access.project.id, "Search string drafted by AI for the agreed databases")
+    existing = {
+        normalize_database_name(strategy.database)
+        for strategy in db.scalars(
+            select(models.SearchStrategy).where(models.SearchStrategy.project_id == access.project.id)
+        )
+    }
+    wanted = []
+    for name in body.databases:
+        label = availability(name.strip())["label"]
+        if label and normalize_database_name(label) not in existing:
+            existing.add(normalize_database_name(label))
+            wanted.append(label)
+    if not wanted:
+        raise HTTPException(status_code=409, detail="Every database you chose already has a search strategy")
+
+    context = protocol_context(db, access.project)
+    suggestion = await run_suggestion(
+        db, access, "search_strings", SEARCH_STRINGS_PROMPT, lambda ai: write_search_strings(ai, context, wanted)
+    )
+    added = []
+    for database, query in suggestion.content["searches"].items():
+        strategy = models.SearchStrategy(project_id=access.project.id, database=database[:100], query=query)
+        db.add(strategy)
+        db.flush()
+        record_strategy_version(db, strategy, access.user.id, note)
+        record_event(
+            db,
+            project_id=access.project.id,
+            actor_id=access.user.id,
+            action="search_strategy.added",
+            entity_type="search_strategy",
+            entity_id=strategy.id,
+            details={"database": strategy.database, "query": strategy.query, "note": note, "source": "ai"},
+        )
+        added.append(strategy)
+    db.commit()
+    return {"strategies": [strategy_out(strategy) for strategy in added], "missing": suggestion.content["missing"]}
 
 
 @router.post("/search-strategies", status_code=201)

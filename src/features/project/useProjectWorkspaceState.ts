@@ -25,7 +25,19 @@ const splitCriteria = (criteria: CriterionInfo[]) => {
 };
 
 const toSearchItems = (strategies: StrategyInfo[]): SearchItem[] =>
-  strategies.map(s => ({ id: String(s.id), database: s.database, string: s.query, version: s.version, status: 'pending' }));
+  strategies.map(s => ({
+    id: String(s.id),
+    database: s.database,
+    string: s.query,
+    version: s.version,
+    status: 'pending',
+    searchable: s.searchable,
+    whereToSearch: s.where_to_search,
+    runs: s.runs,
+    recordsRetrieved: s.records_retrieved,
+    lastSearchedOn: s.last_searched_on,
+    lastSearchVersion: s.last_search_version,
+  }));
 
 // All state and actions for one project's workspace. The workspace remounts per project, so state never leaks between projects.
 export function useProjectWorkspaceState(projectId: number) {

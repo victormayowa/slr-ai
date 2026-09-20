@@ -6,4 +6,16 @@ export type ProtocolItem = {
   source: 'ai' | 'reviewer';
 };
 
-export type SearchItem = { id: string; database: string; string: string; version: number; status: 'pending' | 'accepted' | 'rejected' };
+export type SearchItem = {
+  id: string;
+  database: string;
+  string: string;
+  version: number;
+  status: 'pending' | 'accepted' | 'rejected';
+  searchable: boolean;
+  whereToSearch: string;
+  runs: number;
+  recordsRetrieved: number;
+  lastSearchedOn: string | null;
+  lastSearchVersion: number | null;
+};

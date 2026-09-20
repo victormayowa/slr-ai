@@ -7,7 +7,19 @@ export type CriterionInfo = {
   source: 'ai' | 'reviewer';
 };
 
-export type StrategyInfo = { id: number; database: string; query: string; version: number };
+export type StrategyInfo = {
+  id: number;
+  database: string;
+  query: string;
+  version: number;
+  // Where this database can be searched, and what its searches have retrieved so far.
+  searchable: boolean;
+  where_to_search: string;
+  runs: number;
+  records_retrieved: number;
+  last_searched_on: string | null;
+  last_search_version: number | null;
+};
 
 export type ProtocolSettings = {
   review_type: string;

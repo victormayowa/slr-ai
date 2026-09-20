@@ -6,9 +6,10 @@ import { useAuth } from '../../auth/authContext';
 import { WorkspaceStageGate } from '../project/WorkspaceStageGate';
 import type { SearchItem } from '../project/types';
 import { useWorkspace } from '../project/workspaceContext';
+import { DatabasePlanner } from './DatabasePlanner';
 import { MeshLookup, PressReviewPanel, RecallCheckPanel, SyntaxCheck, Tool, TranslatePanel, VersionHistory } from './StrategyTools';
 
-const panel = { background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '8px' } as const;
+const panel = { background: 'var(--surface-muted)', padding: '16px', borderRadius: '8px' } as const;
 const labelStyle = { display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)' } as const;
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -57,7 +58,7 @@ function StrategyCard({ item, sources, quality, press, onSearched, onQualityChan
         limit,
       });
       const total = result.total_available !== null ? ` of ${result.total_available.toLocaleString()}` : '';
-      onSearched(`Retrieved ${result.result_count.toLocaleString()}${total} records from ${result.source}.`);
+      onSearched(`Added ${result.result_count.toLocaleString()}${total} records from ${result.source}.`);
     } catch (err) {
       onSearched(errorMessage(err, `The ${item.database} search failed.`));
     }
@@ -68,9 +69,19 @@ function StrategyCard({ item, sources, quality, press, onSearched, onQualityChan
     <div style={{ ...panel, marginBottom: '12px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
         <strong style={{ fontSize: '1.1rem' }}>{item.database}</strong>
-        <span style={{ fontSize: '0.8rem', color: press?.status === 'approved' ? '#10b981' : '#f59e0b' }}>
+        <span style={{ fontSize: '0.8rem', color: press?.status === 'approved' ? '#137A47' : '#9A5B00' }}>
           Version {item.version}{press ? ` · ${PRESS_STATUS_LABELS[press.status]}` : ''}
         </span>
+      </div>
+      <div style={{ fontSize: '0.85rem', margin: '4px 0', color: item.runs ? '#137A47' : 'var(--text-secondary)' }}>
+        {item.runs
+          ? `Searched ${new Date(item.lastSearchedOn ?? '').toLocaleDateString()} · ${item.recordsRetrieved.toLocaleString()} records added from ${item.database}${item.runs > 1 ? ` over ${item.runs} searches` : ''}`
+          : item.searchable
+            ? 'Not searched yet'
+            : 'Not imported yet'}
+        {item.runs > 0 && item.lastSearchVersion !== null && item.lastSearchVersion < item.version && (
+          <span style={{ color: '#9A5B00' }}> · the string has changed since (version {item.lastSearchVersion} was run)</span>
+        )}
       </div>
       <textarea className="search-input" aria-label={`${item.database} search string`} style={{ width: '100%', height: '70px', resize: 'vertical', marginTop: '8px' }} value={item.string} onChange={e => setSearchItems(prev => prev.map(s => (s.id === item.id ? { ...s, string: e.target.value } : s)))} />
       {changed && (
@@ -81,7 +92,7 @@ function StrategyCard({ item, sources, quality, press, onSearched, onQualityChan
         </div>
       )}
       {!matched && importOnly && (
-        <p style={{ fontSize: '0.85rem', color: '#f59e0b', margin: '6px 0' }}>
+        <p style={{ fontSize: '0.85rem', color: '#9A5B00', margin: '6px 0' }}>
           {importOnly.label} can't be searched from OmniReview. Run this string on {importOnly.interface}, export the results as {importOnly.export_hint}, and import the file below.
         </p>
       )}
@@ -100,7 +111,7 @@ function StrategyCard({ item, sources, quality, press, onSearched, onQualityChan
         </button>
       </div>
       {(chosen ?? matched) && <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '6px 0 0' }}>{(chosen ?? matched)!.syntax_note}</p>}
-      {chosen && matched?.key !== chosen.key && <p style={{ fontSize: '0.8rem', color: '#f59e0b', margin: '4px 0 0' }}>This string was written for {item.database}; the run is labelled as {chosen.label} so PRISMA reports stay accurate.</p>}
+      {chosen && matched?.key !== chosen.key && <p style={{ fontSize: '0.8rem', color: '#9A5B00', margin: '4px 0 0' }}>This string was written for {item.database}; the run is labelled as {chosen.label} so PRISMA reports stay accurate.</p>}
       <Tool title="Check syntax"><SyntaxCheck projectId={projectId} query={item.string} syntax={syntax} /></Tool>
       <Tool title="Look up MeSH headings"><MeshLookup onInsert={insert} /></Tool>
       {quality && syntax === 'pubmed' && (
@@ -116,7 +127,7 @@ function StrategyCard({ item, sources, quality, press, onSearched, onQualityChan
 }
 
 export function SearchScreen() {
-  const { projectId, searchItems, literatureResults, handleResetSearch, goTo, refreshRecords, refreshWorkflow } = useWorkspace();
+  const { projectId, searchItems, literatureResults, handleResetSearch, goTo, refreshRecords, refreshWorkflow, reloadStrategies } = useWorkspace();
   const { apiRequest } = useAuth();
   const [sources, setSources] = useState<SearchSources | null>(null);
   const [runs, setRuns] = useState<SearchRunInfo[]>([]);
@@ -127,6 +138,9 @@ export function SearchScreen() {
   const [quality, setQuality] = useState<SearchQualityCatalog | null>(null);
   const [press, setPress] = useState<PressStatus | null>(null);
   const [waiverReason, setWaiverReason] = useState('');
+
+  const searched = searchItems.reduce((total, item) => total + item.recordsRetrieved, 0);
+  const waiting = searchItems.filter(item => !item.runs).map(item => `${item.database}${item.searchable ? '' : ' (import)'}`);
 
   const loadRuns = useCallback(() => apiRequest('GET', `/api/projects/${projectId}/search-runs`), [apiRequest, projectId]);
 
@@ -153,6 +167,8 @@ export function SearchScreen() {
     setNotice(message);
     try {
       setRuns(await loadRuns());
+      // Reload the strategies too, so each one shows what its searches have retrieved.
+      await reloadStrategies();
       await refreshRecords();
     } catch (err) {
       setNotice(errorMessage(err, message));
@@ -200,16 +216,24 @@ export function SearchScreen() {
 
       <div style={{ marginBottom: '32px' }}>
         <h4 style={{ color: 'var(--accent-primary)', marginBottom: '16px' }}>Search strategies</h4>
-        {searchItems.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>No search strategies yet. Add them in the protocol.</p>}
+        <DatabasePlanner onChanged={afterChange} />
+        {searchItems.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>No search strategies yet. Ask the AI which databases suit this review, or add them in the protocol.</p>}
+        {searchItems.length > 0 && (
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+            {searchItems.filter(item => item.runs).length} of {searchItems.length} database(s) searched
+            {searched > 0 ? `, ${searched.toLocaleString()} records added so far` : ''}
+            {waiting.length > 0 ? `. Still to do: ${waiting.join(', ')}.` : '.'}
+          </p>
+        )}
         {press && (
           <div style={{ marginBottom: '12px', fontSize: '0.9rem' }}>
             {press.waived
-              ? <span style={{ color: '#f59e0b' }}>PRESS peer review waived: {press.waiver_reason}</span>
+              ? <span style={{ color: '#9A5B00' }}>PRESS peer review waived: {press.waiver_reason}</span>
               : press.met
-                ? <span style={{ color: '#10b981' }}>Every current strategy has an approved PRESS peer review.</span>
+                ? <span style={{ color: '#137A47' }}>Every current strategy has an approved PRESS peer review.</span>
                 : (
                   <details>
-                    <summary style={{ cursor: 'pointer', color: '#f59e0b' }}>Search sign-off needs an approved PRESS review of every strategy, or a waiver</summary>
+                    <summary style={{ cursor: 'pointer', color: '#9A5B00' }}>Search sign-off needs an approved PRESS review of every strategy, or a waiver</summary>
                     <textarea aria-label="Reason for waiving PRESS peer review" className="search-input" style={{ width: '100%', minHeight: '50px', marginTop: '6px' }} value={waiverReason} onChange={e => setWaiverReason(e.target.value)} placeholder="For example: no second information specialist is available" />
                     <button className="btn-glass" onClick={waivePress} disabled={waiverReason.trim().length < 20} style={{ padding: '6px 12px', marginTop: '6px' }}>Waive PRESS peer review</button>
                   </details>
@@ -221,8 +245,8 @@ export function SearchScreen() {
         ))}
       </div>
 
-      <div style={{ background: 'rgba(16, 185, 129, 0.05)', border: '1px dashed rgba(16,185,129,0.4)', padding: '24px', borderRadius: '12px' }}>
-        <h4 style={{ color: '#10b981', marginTop: 0 }}>Import an export file</h4>
+      <div style={{ background: 'rgba(19, 122, 71, 0.05)', border: '1px dashed rgba(19, 122, 71, 0.4)', padding: '24px', borderRadius: '12px' }}>
+        <h4 style={{ color: '#137A47', marginTop: 0 }}>Import an export file</h4>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
           For databases searched on their own platform. Accepted formats: {sources?.import_formats ?? 'RIS, MEDLINE, BibTeX, EndNote XML, Web of Science, or CSV'}.
         </p>
@@ -261,16 +285,16 @@ export function SearchScreen() {
       {runs.length > 0 && (
         <div style={{ marginTop: '32px' }}>
           <h4 style={{ color: 'var(--accent-primary)' }}>Search log (PRISMA-S)</h4>
-          <div style={{ overflowX: 'auto', background: 'rgba(0,0,0,0.3)', borderRadius: '12px' }}>
+          <div style={{ overflowX: 'auto', background: 'var(--surface-muted)', borderRadius: '12px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
-              <thead style={{ background: '#1e293b' }}>
+              <thead style={{ background: 'var(--lab)' }}>
                 <tr>
                   {['Date', 'Source', 'Interface', 'Search string', 'Records', 'Format'].map(heading => <th key={heading} style={{ padding: '10px' }}>{heading}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {runs.map(run => (
-                  <tr key={run.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                  <tr key={run.id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '10px', whiteSpace: 'nowrap' }}>{run.searched_on ?? run.executed_at.slice(0, 10)}</td>
                     <td style={{ padding: '10px' }}>{run.source}</td>
                     <td style={{ padding: '10px' }}>{run.interface ?? '—'}</td>
@@ -290,9 +314,9 @@ export function SearchScreen() {
       {literatureResults.length > 0 && (
         <div style={{ marginTop: '32px' }}>
           <h4 style={{ color: 'var(--accent-primary)', marginBottom: '16px' }}>Records ({literatureResults.length})</h4>
-          <div style={{ overflowX: 'auto', background: 'rgba(0,0,0,0.3)', borderRadius: '12px', maxHeight: '300px' }}>
+          <div style={{ overflowX: 'auto', background: 'var(--surface-muted)', borderRadius: '12px', maxHeight: '300px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-              <thead style={{ position: 'sticky', top: 0, background: '#1e293b' }}>
+              <thead style={{ position: 'sticky', top: 0, background: 'var(--lab)' }}>
                 <tr>
                   <th style={{ padding: '12px' }}>Source</th>
                   <th style={{ padding: '12px' }}>Title</th>
@@ -303,7 +327,7 @@ export function SearchScreen() {
               </thead>
               <tbody>
                 {literatureResults.map(p => (
-                  <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                  <tr key={p.id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '12px' }}>{p.source}</td>
                     <td style={{ padding: '12px', maxWidth: '300px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.title}</td>
                     <td style={{ padding: '12px', maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.authors}</td>
@@ -318,7 +342,7 @@ export function SearchScreen() {
       )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px' }}>
-        <button className="btn-glass" onClick={handleResetSearch} style={{ color: '#ef4444', borderColor: '#ef4444' }}>✕ Clear All Searches</button>
+        <button className="btn-glass" onClick={handleResetSearch} style={{ color: '#C62828', borderColor: '#C62828' }}>✕ Clear All Searches</button>
         <button className="btn-primary" onClick={() => goTo('other-sources')}>Proceed to Citations & Grey Literature →</button>
       </div>
     </section>

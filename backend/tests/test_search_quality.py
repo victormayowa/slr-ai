@@ -1,7 +1,13 @@
-"""Strategy versions and post-lock amendments, translation, MeSH lookup, recall checks, and PRESS peer review."""
+"""Choosing databases with the AI, strategy versions and post-lock amendments, translation, MeSH lookup, recall
+checks, and PRESS peer review."""
+
+import json
+from dataclasses import replace
+from datetime import date
 
 import pytest
 from workflow_helpers import (
+    PROTOCOL,
     add_member,
     complete_stage,
     create_project,
@@ -14,6 +20,7 @@ from workflow_helpers import (
 
 import search_quality
 import search_quality_routes
+import search_sources
 
 PRESS_REQUIREMENT = "PRESS peer review approved for every current search strategy, or PRESS waived with a reason"
 APPROVE_ALL = {key: {"rating": "no_revision", "comment": ""} for key in search_quality.PRESS_KEYS}
@@ -38,6 +45,82 @@ def lock_for_search(client, project_id, headers, fake_provider):
 
 def unmet_search(client, project_id, headers):
     return [r["label"] for r in workflow(client, project_id, headers)["search"]["requirements"] if not r["met"]]
+
+
+def test_the_ai_suggests_databases_and_drafts_a_string_for_the_ones_chosen(client, project, fake_provider):
+    project_id, headers = project
+    client.put(url(project_id, "protocol"), json=PROTOCOL, headers=headers)
+    fake_provider(
+        json.dumps(
+            {
+                "databases": [
+                    {"database": "PubMed", "reason": "Core biomedical coverage."},
+                    {"database": "Embase", "reason": "European drug trials PubMed misses."},
+                    {"database": "pubmed", "reason": "A duplicate that should be dropped."},
+                    {"database": "Regional Nursing Index", "reason": "A source OmniReview has no connector for."},
+                ]
+            }
+        )
+    )
+
+    suggested = client.post(url(project_id, "search-databases/ai"), headers=headers)
+
+    assert suggested.status_code == 200, suggested.text
+    databases = suggested.json()["content"]["databases"]
+    assert [item["database"] for item in databases] == ["PubMed", "Embase", "Regional Nursing Index"]
+    assert [item["searchable"] for item in databases] == [True, False, False]
+    assert "export the results as RIS" in next(item["note"] for item in databases if item["database"] == "Embase")
+    assert client.get(url(project_id, "search-strategies"), headers=headers).json() == [], "nothing is added yet"
+
+    fake_provider(
+        json.dumps(
+            {
+                "searches": [
+                    {"database": "PubMed", "query": "aspirin[tiab] AND prevention[tiab]"},
+                    {"database": "Embase", "query": "'aspirin'/exp AND 'prevention'/exp"},
+                ]
+            }
+        )
+    )
+    drafted = client.post(
+        url(project_id, "search-strategies/ai"), json={"databases": ["PubMed", "Embase", "Scopus"]}, headers=headers
+    )
+
+    assert drafted.status_code == 201, drafted.text
+    body = drafted.json()
+    assert {item["database"] for item in body["strategies"]} == {"PubMed", "Embase"}
+    assert body["missing"] == ["Scopus"], "reviewers are told which strings the AI didn't write"
+    strategies = client.get(url(project_id, "search-strategies"), headers=headers).json()
+    assert {item["database"]: item["searchable"] for item in strategies} == {"PubMed": True, "Embase": False}
+    assert all(item["runs"] == 0 and item["last_searched_on"] is None for item in strategies)
+    repeated = client.post(url(project_id, "search-strategies/ai"), json={"databases": ["PubMed"]}, headers=headers)
+    assert repeated.status_code == 409, "a database that already has a strategy isn't drafted again"
+
+
+def test_a_strategy_shows_what_its_searches_retrieved(client, project, fake_provider, monkeypatch):
+    project_id, headers = project
+    pubmed, _ = lock_for_search(client, project_id, headers, fake_provider)
+    results = [
+        {"title": "Aspirin trial", "authors": "Smith", "year": "2020", "doi": "10.1/a", "id": "1"},
+        {"title": "Aspirin cohort", "authors": "Jones", "year": "2021", "doi": "10.1/b", "id": "2"},
+    ]
+    monkeypatch.setitem(
+        search_sources.CONNECTORS,
+        "pubmed",
+        replace(search_sources.CONNECTORS["pubmed"], search=lambda query, limit: (results, 57)),
+    )
+
+    run = client.post(url(project_id, "searches"), json={"strategy_id": pubmed["id"], "limit": 10}, headers=headers)
+
+    assert run.status_code == 201, run.text
+    strategy = next(
+        item
+        for item in client.get(url(project_id, "search-strategies"), headers=headers).json()
+        if item["id"] == pubmed["id"]
+    )
+    assert (strategy["runs"], strategy["records_retrieved"]) == (1, 2)
+    assert strategy["last_searched_on"] == date.today().isoformat()
+    assert strategy["last_search_version"] == strategy["version"]
 
 
 def test_strategy_changes_after_the_protocol_is_locked_need_a_reason_and_are_versioned(client, project, fake_provider):

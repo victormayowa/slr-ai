@@ -70,6 +70,13 @@ def test_real_key_is_used(monkeypatch):
     assert PROVIDERS["openai"].platform_api_key() == "sk-live-example"
 
 
+def test_server_keys_are_ignored_in_own_keys_only_mode(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-live-example")
+    monkeypatch.setenv("AI_PLATFORM_KEYS", "false")
+
+    assert PROVIDERS["openai"].platform_api_key() is None
+
+
 def test_base_url_can_be_overridden_per_provider(monkeypatch):
     monkeypatch.setenv("QWEN_BASE_URL", "https://dashscope-us.aliyuncs.com/compatible-mode/v1")
 
@@ -122,7 +129,7 @@ def test_retries_stop_after_the_attempt_limit(monkeypatch):
     with pytest.raises(LLMError) as error:
         asyncio.run(runner.complete_text(context(), "prompt", max_tokens=100))
 
-    assert "unavailable" in str(error.value)
+    assert "overloaded" in str(error.value)
     assert error.value.usage.attempts == runner.MAX_ATTEMPTS
 
 
@@ -294,6 +301,8 @@ def test_every_prompt_renders_with_the_untrusted_text_note():
     values.update(section="s", guidance="g", review="r", evidence="e", references="r", current="c", task="t")
     values.update(journal_style="j", text="t", kind_instruction="k", journal="j", guideline="g", requirement_names="r")
     values.update(statements="s", comments="c", sections="s")
+    values.update(synthesis_approaches="meta_analysis (Meta-analysis)", outcome_priorities="primary (Primary)")
+    values.update(sources="- PubMed (database)", databases="- PubMed: PubMed syntax")
 
     for prompt in PROMPTS.values():
         placeholders = {name for name in values if f"${name}" in prompt.text}
@@ -404,3 +413,36 @@ def test_gemini_embedding_contract(monkeypatch):
 def test_providers_without_an_embeddings_api_are_refused():
     with pytest.raises(ValueError):
         asyncio.run(REAL_EMBED_TEXTS(PROVIDERS["anthropic"], "m", ["text"], "k", dimensions=1024))
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        (400, "Your credit balance is too low to access the Anthropic API."),
+        (429, "You exceeded your current quota, please check your plan and billing details. insufficient_quota"),
+    ],
+)
+def test_an_account_without_credit_is_explained_and_not_retried(status, reason):
+    error = ProviderHTTPError(status, reason)
+    spec = PROVIDERS["anthropic"]
+
+    message = adapters.safe_error_message(spec, "claude-model", error)
+
+    assert adapters.is_out_of_credit(error)
+    assert not adapters.is_retryable(error)
+    assert "accepted the key" in message and "credit" in message
+    assert "sk-secret-123" not in message and "Anthropic API" not in message
+
+
+def test_plain_rate_limits_are_still_retried():
+    error = ProviderHTTPError(429, "Too many requests")
+
+    assert not adapters.is_out_of_credit(error)
+    assert adapters.is_retryable(error)
+
+
+def test_an_overloaded_model_suggests_waiting_or_choosing_another():
+    message = adapters.safe_error_message(PROVIDERS["gemini"], "gemini-3.8-flash", ProviderHTTPError(503))
+
+    assert '"gemini-3.8-flash" is overloaded' in message
+    assert "Project Setup" in message and "sk-secret-123" not in message
