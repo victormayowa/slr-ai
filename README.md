@@ -106,11 +106,14 @@ CI runs all of these on every push and pull request, tests the backend against P
 `docker-compose.prod.yml` runs Caddy (the web app, automatic HTTPS, and the `/api` and `/docs` proxy), the API, the background worker, PostgreSQL, and Redis on a single server, with persistent volumes for the database and documents. The API image includes R and Pandoc for analyses and exports.
 
 ```bash
-SITE_ADDRESS=reviews.example.org POSTGRES_PASSWORD=... docker compose -f docker-compose.prod.yml up -d --build
+cp ops/deploy.env.example .env      # SITE_ADDRESS (your domain) and POSTGRES_PASSWORD
+docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml exec api python -m scripts.production_check --strict
 ```
 
-**Read [docs/production-readiness.md](docs/production-readiness.md) first.** It lists every setting, decision, and check before launch. The API refuses to start in production with unsafe settings, and `scripts.production_check` reports everything else. Operations scripts live in `ops/`: `harden-server.sh`, `deploy.sh` (backup, health gate, rollback), `backup.sh` and `restore.sh` (with restic off-site copies), `restore-drill.sh`, systemd timers, and a k6 load test.
+Every push to `main` that passes CI is deployed to the server by the `deploy` job in `.github/workflows/ci.yml`: it runs `ops/deploy.sh` there over SSH, which backs up first, waits for the health checks, and rolls the code back if they fail. PostgreSQL and Redis are never published outside the server; reach the database with `docker compose exec postgres psql` or an SSH tunnel. A domain on DuckDNS is kept pointing at the server by `ops/duckdns-update.sh` and its timer.
+
+**Read [docs/production-readiness.md](docs/production-readiness.md) first.** It lists every setting, decision, and check before launch. The API refuses to start in production with unsafe settings, and `scripts.production_check` reports everything else. Operations scripts live in `ops/`: `harden-server.sh`, `deploy.sh` (backup, health gate, rollback), `backup.sh` and `restore.sh` (with restic off-site copies), `restore-drill.sh`, `duckdns-update.sh`, systemd timers, and a k6 load test.
 
 ## Configuration
 

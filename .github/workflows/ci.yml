@@ -97,3 +97,32 @@ jobs:
         run: docker build --build-arg WITH_ANALYSIS_TOOLS=false -t omnireview-api ./backend
       - name: Build web image
         run: docker build -f docker/web.Dockerfile -t omnireview-web .
+
+  # Every push to main that passes the checks above goes live on the VPS. The server pulls the commit itself and runs
+  # ops/deploy.sh, which backs up first, waits for the health checks, and rolls the code back if they fail.
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, ops, docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    # One deploy at a time, and never cancel one half-way through.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Deploy over SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/srv/omnireview' }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # The server's public key is pinned in a secret, so a changed host key stops the deploy.
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && git fetch --prune --tags origin && ops/deploy.sh '${{ github.sha }}'"

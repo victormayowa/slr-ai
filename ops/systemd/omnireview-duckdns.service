@@ -1,0 +1,14 @@
+[Unit]
+Description=Point the DuckDNS domain at this server
+Documentation=https://github.com/victormayowa/slr-ai/blob/main/docs/production-readiness.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/srv/omnireview/ops/duckdns-update.sh
+# The token is the only secret here, and it stays in the environment file.
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true

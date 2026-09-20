@@ -34,11 +34,22 @@ worker, PostgreSQL with pgvector, and Redis.
 - [ ] *Manual.* A server with at least 4 vCPUs, 16 GB RAM, and 100 GB SSD (the R environment and document storage are
   the large parts); Ubuntu 22.04 or 24.04; Docker Engine with the compose plugin; full-disk encryption if the provider
   offers it.
-- [ ] *Manual.* A DNS A/AAAA record for your domain pointing at the server (Caddy gets the TLS certificate
-  automatically on first start).
+- [ ] *Manual.* A DNS record for your domain pointing at the server (Caddy gets the TLS certificate automatically on
+  first start). With a DuckDNS name such as `omnireview.duckdns.org`, let the server keep the record up to date
+  instead: put `DUCKDNS_DOMAIN` (the name alone, without `.duckdns.org`) and `DUCKDNS_TOKEN` in
+  `/etc/omnireview/duckdns.env` (`chmod 600`, owned by root), then install the timer with the others below. It
+  publishes the address the update comes from, every five minutes.
 - [ ] *Manual.* Harden the server: `sudo DEPLOY_USER=deploy ops/harden-server.sh` (firewall allowing only SSH, HTTP,
   HTTPS; SSH keys only; fail2ban; automatic security updates; bounded Docker logs).
 - [ ] *Manual.* Clone the repository to `/srv/omnireview` as the deploy user.
+- [ ] *Manual.* Copy `ops/deploy.env.example` to `/srv/omnireview/.env` and fill in `SITE_ADDRESS` and
+  `POSTGRES_PASSWORD`. Compose and `ops/deploy.sh` both read it, so a deploy needs nothing in its environment.
+- [ ] PostgreSQL and Redis are reachable only inside the server: the compose file publishes ports 80 and 443 and
+  nothing else, so neither is exposed even though Docker bypasses the firewall for ports it publishes. To use `psql`
+  or a database tool from your own machine, tunnel over SSH rather than opening the port:
+  `ssh -N -L 5432:127.0.0.1:5432 deploy@<server> docker compose -f /srv/omnireview/docker-compose.prod.yml exec -T postgres sleep infinity`
+  — or more simply, work on the server itself with
+  `docker compose -f docker-compose.prod.yml exec postgres psql -U omnireview omnireview`.
 
 ## 3. Configuration (`backend/.env` on the server)
 
@@ -62,7 +73,7 @@ Start from `backend/.env.example`. Never commit `.env`.
 - [ ] `SENTRY_DSN` for error reports. **[error_reporting]**
 - [ ] AI provider keys the server pays for (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, ...), and a default chat model in
   the catalog. **[default_model]**
-- [ ] `REQUIRE_VALIDATED_MODELS=true` once the models you offer have passed the benchmarks (see section 7).
+- [ ] `REQUIRE_VALIDATED_MODELS=true` once the models you offer have passed the benchmarks (see section 8).
   **[validated_models]**
 - [ ] Billing: `BILLING_ENABLED=true`, `BILLING_PROVIDER=stripe` (or `manual`), `STRIPE_SECRET_KEY` (a live `sk_live_`
   key), `STRIPE_WEBHOOK_SECRET`. **[billing_enabled] [billing_provider] [stripe] [billing]**
@@ -78,8 +89,7 @@ Start from `backend/.env.example`. Never commit `.env`.
 ## 4. First start
 
 ```bash
-cd /srv/omnireview
-export SITE_ADDRESS=reviews.example.org POSTGRES_PASSWORD=...
+cd /srv/omnireview                                           # SITE_ADDRESS and POSTGRES_PASSWORD come from .env
 docker compose -f docker-compose.prod.yml up -d --build      # builds R and Pandoc into the image (20-40 minutes)
 docker compose -f docker-compose.prod.yml exec api python -m scripts.make_admin you@example.org   # after registering
 docker compose -f docker-compose.prod.yml exec api python -m scripts.production_check --strict
@@ -98,13 +108,44 @@ docker compose -f docker-compose.prod.yml exec api python -m scripts.production_
   `docker compose -f docker-compose.prod.yml exec api python -m scripts.smoke_test --base-url http://127.0.0.1:8000
   --email you@example.org --password ... --colleague colleague@example.org --colleague-password ...` *Manual.*
 
-## 5. Backups and recovery
+## 5. Deploying from GitHub
+
+Every push to `main` that passes the checks in `.github/workflows/ci.yml` (lint, types, tests, migration drift,
+dependency audits, image builds, shellcheck) is deployed to the server by the `deploy` job. It connects over SSH and
+runs `ops/deploy.sh <commit>` there, which backs the database up first, builds, waits for the health checks, runs the
+readiness check, and rolls the code back if any of that fails. Deploys never run in parallel.
+
+Set these in the repository's **Settings → Secrets and variables → Actions**, either as repository secrets or under
+an environment named `production`:
+
+- [ ] `DEPLOY_HOST`: the server's address, for example `169.58.141.167`.
+- [ ] `DEPLOY_USER`: the deploy user (`deploy` if you used `ops/harden-server.sh`).
+- [ ] `DEPLOY_SSH_KEY`: the private half of a key made for this alone
+  (`ssh-keygen -t ed25519 -C "github-actions" -f deploy_key`), with the public half in the deploy user's
+  `~/.ssh/authorized_keys`. Give it no passphrase, and use it for nothing else.
+- [ ] `DEPLOY_KNOWN_HOSTS`: the server's host key, from `ssh-keyscan <server>`. The deploy stops if the host key ever
+  changes, which is what makes the connection trustworthy.
+- [ ] *Optional.* A repository variable `DEPLOY_PATH` if the clone isn't at `/srv/omnireview`.
+
+- [ ] *Manual.* If the repository is private, give the server read access too: a read-only deploy key on the clone,
+  since the server pulls the commit itself.
+- [ ] *Manual.* The key has shell access as the deploy user. To narrow it, prefix its line in `authorized_keys` with
+  `command="cd /srv/omnireview && git fetch --prune --tags origin && ops/deploy.sh $SSH_ORIGINAL_COMMAND",no-pty`
+  so the key can only deploy.
+- [ ] *Manual.* Protect `main` (require the checks to pass before merging), so nothing reaches the server without
+  them.
+- [ ] *Manual.* Requiring a reviewer on the `production` environment adds a pause before each deploy, if you want one.
+- [ ] Migrations run as the API starts. Switching the code back does not undo them, so a failed deploy that had
+  already migrated needs the pre-deploy backup: `ops/restore.sh <backup>` (the failed deploy prints which one).
+
+## 6. Backups and recovery
 
 - [ ] *Manual.* Configure `ops/backup.env` (`BACKUP_DIR`, `RESTIC_REPOSITORY`, `RESTIC_PASSWORD_FILE`, and the storage
   credentials restic needs), then initialise the repository once: `restic init`.
 - [ ] *Manual.* Install and enable the timers:
   `sudo cp ops/systemd/* /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now
-  omnireview-backup.timer omnireview-restore-drill.timer`
+  omnireview-backup.timer omnireview-restore-drill.timer` (add `omnireview-duckdns.timer` when the domain is on
+  DuckDNS)
 - [ ] A backup has run in the last 26 hours. **[backup]**
 - [ ] A restore drill has succeeded in the last 35 days (run `ops/restore-drill.sh` once by hand now).
   **[restore_drill]**
@@ -115,7 +156,7 @@ docker compose -f docker-compose.prod.yml exec api python -m scripts.production_
 - [ ] *Manual.* Rehearse a full restore on a spare server with `ops/restore.sh` before launch, and write down how long
   it took (your recovery time).
 
-## 6. Monitoring
+## 7. Monitoring
 
 - [ ] Sentry receives errors (trigger one on staging to confirm). **[error_reporting]**
 - [ ] *Manual.* An external uptime monitor (for example UptimeRobot or Better Stack) checks
@@ -125,7 +166,7 @@ docker compose -f docker-compose.prod.yml exec api python -m scripts.production_
 - [ ] *Manual.* Set spending limits and alerts in each AI provider's billing console; the report shows spend, but only
   the provider can cap it.
 
-## 7. AI governance
+## 8. AI governance
 
 - [ ] *Manual.* In **Admin → Models & benchmarks**, run the statistics benchmark (it checks R against published
   metafor values) and at least one screening benchmark per model you offer (build a data set from SYNERGY with
@@ -135,7 +176,7 @@ docker compose -f docker-compose.prod.yml exec api python -m scripts.production_
 - [ ] *Manual.* Confirm each AI provider's API data terms: no training on your data, and their retention period.
   Record them in the Privacy Policy.
 
-## 8. Legal and privacy
+## 9. Legal and privacy
 
 The documents in `docs/legal/` are templates written to match how OmniReview works. They are not legal advice.
 
@@ -153,7 +194,7 @@ The documents in `docs/legal/` are templates written to match how OmniReview wor
   commercial reuse of their texts; OmniReview uses its own short labels, but confirm this is acceptable) and for
   CSL citation styles.
 
-## 9. Security
+## 10. Security
 
 Built in: bcrypt passwords, optional two-factor sign-in, sessions that end when a password changes, email
 verification, rate limits, security headers and a strict Content-Security-Policy, encrypted secrets, SSRF protection
@@ -168,7 +209,7 @@ for webhooks and feeds, scoped API tokens, a hash-chained audit trail, and depen
 - [ ] Institutional single sign-on (SAML/OIDC) and ORCID login are **not built yet** (planned with Keycloak, roadmap
   W1). Institutions that require SSO must wait, or sign in with passwords and two-factor sign-in.
 
-## 10. Quality gates
+## 11. Quality gates
 
 - [ ] *Manual.* Accessibility: an audit against WCAG 2.2 AA of sign-up, sign-in, the dashboard, screening, extraction,
   and billing, with keyboard-only and screen reader passes; fix blocking issues.
@@ -180,7 +221,7 @@ for webhooks and feeds, scoped API tokens, a hash-chained audit trail, and depen
 - [ ] *Manual.* A billing run in Stripe test mode on staging: subscribe, change plan in the portal, fail a payment
   with a test card, cancel; check the plan and limits follow each step.
 
-## 11. Launch day
+## 12. Launch day
 
 - [ ] `ops/deploy.sh <tag>` from a tagged release (takes a backup, builds, waits for health, runs the readiness check,
   and rolls the code back if anything fails).
@@ -192,7 +233,7 @@ for webhooks and feeds, scoped API tokens, a hash-chained audit trail, and depen
 
 - One server: the database, worker, and web app share it. Scale by moving PostgreSQL to a managed service and running
   more workers (`--scale worker=N`) before adding servers.
-- Documents are on the server's disk (backed up nightly); an S3-compatible store needs an implementation of
-  `DocumentStorage` in `backend/storage.py`.
-- No single sign-on or ORCID login yet (see section 9).
+- Documents are on the server's disk by default (backed up nightly). An account can instead keep its files in its own
+  S3-compatible bucket (`docs/your-keys-and-storage.md`); those files are outside these backups.
+- No single sign-on or ORCID login yet (see section 10).
 - The PROSPERO registry has no submission API; registration there stays a guided copy-and-paste.

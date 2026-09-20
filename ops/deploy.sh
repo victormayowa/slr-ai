@@ -3,6 +3,8 @@
 #
 #   ops/deploy.sh v1.2.0        # a tag, branch, or commit
 #
+# GitHub Actions runs exactly this over SSH for every push to main that passes the checks (.github/workflows/ci.yml).
+#
 # Database migrations run when the API starts. They can't be undone by switching code back, so if a deploy fails after
 # migrating, this script rolls the code back and tells you how to restore the pre-deploy backup.
 set -euo pipefail
@@ -10,8 +12,16 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 VERSION="${1:?Give the tag, branch, or commit to deploy}"
+# The deploy settings live in .env beside the compose file (SITE_ADDRESS, POSTGRES_PASSWORD, BACKUP_DIR). Docker
+# Compose reads that file by itself; this reads it too, so a deploy over SSH needs nothing in its environment.
+if [ -r "$ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091  # written on the server, never committed
+  . "$ROOT/.env"
+  set +a
+fi
 COMPOSE=(docker compose -f "$ROOT/docker-compose.prod.yml")
-SITE="${SITE_ADDRESS:?Set SITE_ADDRESS, e.g. reviews.example.org}"
+SITE="${SITE_ADDRESS:?Set SITE_ADDRESS in .env, e.g. omnireview.duckdns.org}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-300}"
 cd "$ROOT"
 

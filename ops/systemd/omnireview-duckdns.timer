@@ -1,0 +1,12 @@
+[Unit]
+Description=Keep the DuckDNS domain pointing at this server
+
+[Timer]
+# Soon after boot, then every five minutes, so a changed address is corrected quickly.
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
