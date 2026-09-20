@@ -646,6 +646,10 @@ class CandidateDecision(BaseModel):
     keep_record_id: int | None = None
 
 
+class BulkCandidateDecision(BaseModel):
+    decision: Literal["duplicate", "not_duplicate"]
+
+
 @router.get("/duplicate-candidates")
 def duplicate_candidates(
     access: ProjectAccess = Depends(project_access(Permission.VIEW_PROJECT)), db: Session = Depends(get_db)
@@ -669,6 +673,68 @@ def duplicate_candidates(
             for pair in pairs
         ]
     }
+
+
+def _original_of(record: models.Record, by_id: dict[int, models.Record]) -> models.Record:
+    """The record a duplicate points at, following the chain. Pairs are merged one after another, so by the time a
+    pair is reached either side may already have become a duplicate of something else."""
+    seen: set[int] = set()
+    while record.duplicate_of_id is not None and record.duplicate_of_id in by_id and record.id not in seen:
+        seen.add(record.id)
+        record = by_id[record.duplicate_of_id]
+    return record
+
+
+@router.post("/duplicate-candidates/decide-all")
+def decide_all_duplicate_candidates(
+    body: BulkCandidateDecision,
+    access: ProjectAccess = Depends(project_access(Permission.RUN_SEARCH)),
+    db: Session = Depends(get_db),
+):
+    """Decide every pair still waiting, in one go: merge them all, or mark them all as separate studies.
+
+    Merging keeps the earlier record of each pair, the same record automatic deduplication keeps, and every pair is
+    recorded with who decided it, so the PRISMA counts and the audit trail read the same as deciding one at a time.
+    """
+    require_stage_open(db, access.project.id, "search")
+    records = db.scalars(select(models.Record).where(models.Record.project_id == access.project.id)).all()
+    by_id = {record.id: record for record in records}
+    pairs = candidate_pairs(records, reviewed_pairs(db, access.project.id))
+    reviews = {
+        (review.record_id, review.other_record_id): review
+        for review in db.scalars(
+            select(models.DuplicateReview).where(models.DuplicateReview.project_id == access.project.id)
+        )
+    }
+    merged: list[dict[str, int]] = []
+    for pair in pairs:
+        first_id, second_id = sorted((pair.record_id, pair.other_id))
+        if body.decision == "duplicate":
+            kept = _original_of(by_id[first_id], by_id)
+            duplicate = _original_of(by_id[second_id], by_id)
+            if kept.id == duplicate.id:
+                continue  # already merged through another pair
+            if kept.id > duplicate.id:
+                kept, duplicate = duplicate, kept
+            _mark_as_duplicate(db, duplicate, kept)
+            merged.append({"kept_record_id": kept.id, "duplicate_record_id": duplicate.id})
+        review = reviews.get((first_id, second_id)) or models.DuplicateReview(
+            project_id=access.project.id, record_id=first_id, other_record_id=second_id
+        )
+        review.decision, review.reviewer_id, review.created_at = body.decision, access.user.id, models.utcnow()
+        db.add(review)
+    db.flush()
+    record_event(
+        db,
+        project_id=access.project.id,
+        actor_id=access.user.id,
+        action="duplicates.reviewed_all",
+        entity_type="project",
+        entity_id=access.project.id,
+        details={"decision": body.decision, "pairs": len(pairs), "merged": merged},
+    )
+    db.commit()
+    return {"decision": body.decision, "pairs": len(pairs), "merged": len(merged)}
 
 
 @router.post("/duplicate-candidates/decision")

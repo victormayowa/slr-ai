@@ -57,6 +57,28 @@ function CandidatePairs({ version }: { version: number }) {
     };
   }, [load, version]);
 
+  // Every pair at once. Merging keeps the earlier record of each pair, as automatic deduplication does.
+  const decideAll = async (decision: 'duplicate' | 'not_duplicate') => {
+    const count = pairs?.length ?? 0;
+    const question = decision === 'duplicate'
+      ? `Merge all ${count} pair(s)? The earlier record of each pair is kept and the other is set aside as a duplicate.`
+      : `Mark all ${count} pair(s) as separate studies? None of them will be set aside.`;
+    if (!window.confirm(question)) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const result = await apiRequest('POST', `/api/projects/${projectId}/duplicate-candidates/decide-all`, { decision });
+      setPairs((await load()).pairs);
+      await refreshRecords();
+      setNotice(decision === 'duplicate'
+        ? `${result.merged} record(s) set aside as duplicates from ${result.pairs} pair(s).`
+        : `${result.pairs} pair(s) marked as separate studies.`);
+    } catch (err) {
+      setNotice(errorMessage(err, 'Could not decide the pairs.'));
+    }
+    setBusy(false);
+  };
+
   const decide = async (pair: DuplicateCandidate, decision: 'duplicate' | 'not_duplicate', keep?: RecordBrief) => {
     setBusy(true);
     setNotice(null);
@@ -78,7 +100,19 @@ function CandidatePairs({ version }: { version: number }) {
   if (pairs === null) return notice ? <p role="status">{notice}</p> : null;
   return (
     <div style={{ marginTop: '32px' }}>
-      <h4 style={{ margin: '0 0 8px', color: 'var(--text-primary)' }}>Possible duplicates to review ({pairs.length})</h4>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', alignItems: 'center', margin: '0 0 8px' }}>
+        <h4 style={{ margin: 0, color: 'var(--text-primary)' }}>Possible duplicates to review ({pairs.length})</h4>
+        {pairs.length > 0 && (
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button className="btn-primary" style={smallButton} disabled={busy} onClick={() => decideAll('duplicate')}>
+              Drop all {pairs.length} as duplicates
+            </button>
+            <button className="btn-glass" style={smallButton} disabled={busy} onClick={() => decideAll('not_duplicate')}>
+              Keep all as separate studies
+            </button>
+          </div>
+        )}
+      </div>
       {notice && <p role="status" style={{ color: 'var(--text-secondary)' }}>{notice}</p>}
       {pairs.length === 0 ? (
         <p style={{ color: 'var(--text-secondary)' }}>No record pairs with near-identical titles are waiting for a decision.</p>

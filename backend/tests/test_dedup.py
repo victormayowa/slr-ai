@@ -4,6 +4,7 @@ import pytest
 from workflow_helpers import create_project, import_records, lock_protocol, url, workflow
 
 import models
+from database import SessionLocal
 from dedup import candidate_pairs, find_duplicates
 
 RIS_EXPORT = b"""TY  - JOUR
@@ -61,6 +62,70 @@ def test_near_matches_are_candidates_for_a_reviewer_not_marked_automatically():
     assert "Different DOIs" in pairs[0].reasons
     assert pairs[1].reasons[1:] == ["Years differ by one", "Same first author"]
     assert candidate_pairs(records, reviewed={(1, 2), (3, 4)}) == []
+
+
+def test_every_pair_can_be_decided_at_once(client, project, fake_provider):
+    project_id, headers = project
+    lock_protocol(client, project_id, headers, fake_provider)
+    first, second, third, fourth, fifth = import_records(
+        client,
+        project_id,
+        headers,
+        [
+            # Three near-identical titles, so the pairs chain: merging one changes what the next pair points at.
+            {"title": "Low-dose aspirin for primary prevention in adults", "year": "2019", "doi": "10.1/a"},
+            {"title": "Low dose aspirin for the primary prevention in adults", "year": "2019", "doi": "10.1/b"},
+            {"title": "Low-dose aspirin for primary prevention in adult patients", "year": "2019", "doi": "10.1/c"},
+            {"title": "Exercise and depression in older people", "year": "2018"},
+            {"title": "Exercise and depression in older people: a trial", "year": "2018"},
+        ],
+    )
+
+    decided = client.post(
+        url(project_id, "duplicate-candidates/decide-all"), json={"decision": "duplicate"}, headers=headers
+    )
+
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["merged"] >= 3, "the later record of every pair is set aside"
+    assert client.get(url(project_id, "duplicate-candidates"), headers=headers).json()["pairs"] == []
+    with SessionLocal() as db:
+        kept_by = {
+            row["id"]: db.get(models.Record, row["id"]).duplicate_of_id for row in (first, second, third, fourth, fifth)
+        }
+    assert kept_by[first["id"]] is None, "the earliest record of each pair is kept"
+    assert kept_by[second["id"]] == first["id"]
+    assert kept_by[third["id"]] == first["id"], "a chain of pairs ends at one record"
+    assert kept_by[fourth["id"]] is None
+    assert kept_by[fifth["id"]] == fourth["id"]
+    unmet = [r["label"] for r in workflow(client, project_id, headers)["search"]["requirements"] if not r["met"]]
+    assert "Possible duplicates reviewed" not in unmet
+    event = client.get(url(project_id, "audit"), headers=headers).json()["events"][0]
+    assert event["action"] == "duplicates.reviewed_all"
+    assert event["details"]["decision"] == "duplicate"
+
+
+def test_all_pairs_can_be_kept_as_separate_studies(client, project, fake_provider):
+    project_id, headers = project
+    lock_protocol(client, project_id, headers, fake_provider)
+    first, second = import_records(
+        client,
+        project_id,
+        headers,
+        [
+            {"title": "Exercise and depression in older people", "year": "2018"},
+            {"title": "Exercise and depression in older people: a trial", "year": "2018"},
+        ],
+    )
+
+    decided = client.post(
+        url(project_id, "duplicate-candidates/decide-all"), json={"decision": "not_duplicate"}, headers=headers
+    )
+
+    assert (decided.status_code, decided.json()["merged"]) == (200, 0)
+    with SessionLocal() as db:
+        kept_by = [db.get(models.Record, row["id"]).duplicate_of_id for row in (first, second)]
+    assert kept_by == [None, None], "nothing is set aside"
+    assert client.get(url(project_id, "duplicate-candidates"), headers=headers).json()["pairs"] == []
 
 
 def test_reviewers_decide_candidate_pairs_before_search_sign_off(client, project, fake_provider):

@@ -57,3 +57,8 @@ recorded with their URL and search date.
 
 Duplicates are found by identifiers (DOI, PMID) and by matching titles, authors, and years. Possible duplicates are
 confirmed or rejected by a reviewer, and similar records can be compared with embeddings.
+
+Pairs can be decided one at a time, choosing which record to keep, or all at once: "Drop all as duplicates" merges
+every waiting pair, keeping the earlier record of each, which is the record automatic deduplication keeps; "Keep all
+as separate studies" marks them all as distinct. Either way each pair is recorded with who decided it, so the PRISMA
+counts and the audit trail read the same as deciding them individually.
