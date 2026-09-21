@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { modelDisplayName } from '../../api/ai';
 import { errorMessage } from '../../api/client';
 import type { RecordBrief } from '../../api/review';
-import type { DuplicateCandidate } from '../../api/search';
+import type { DuplicateCandidate, DuplicateCandidateList } from '../../api/search';
 import { useAuth } from '../../auth/authContext';
 import { ProgressBar } from '../../components/ProgressBar';
 import { WorkspaceStageGate } from '../project/WorkspaceStageGate';
@@ -38,6 +38,7 @@ function CandidatePairs({ version }: { version: number }) {
   const { projectId, refreshRecords } = useWorkspace();
   const { apiRequest } = useAuth();
   const [pairs, setPairs] = useState<DuplicateCandidate[] | null>(null);
+  const [waiting, setWaiting] = useState(0);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -46,8 +47,10 @@ function CandidatePairs({ version }: { version: number }) {
   useEffect(() => {
     let cancelled = false;
     load()
-      .then(data => {
-        if (!cancelled) setPairs(data.pairs);
+      .then((data: DuplicateCandidateList) => {
+        if (cancelled) return;
+        setPairs(data.pairs);
+        setWaiting(data.total);
       })
       .catch(err => {
         if (!cancelled) setNotice(errorMessage(err, 'Could not load possible duplicates.'));
@@ -68,11 +71,14 @@ function CandidatePairs({ version }: { version: number }) {
     setNotice(null);
     try {
       const result = await apiRequest('POST', `/api/projects/${projectId}/duplicate-candidates/decide-all`, { decision });
-      setPairs((await load()).pairs);
+      const next: DuplicateCandidateList = await load();
+      setPairs(next.pairs);
+      setWaiting(next.total);
       await refreshRecords();
+      const left = result.remaining > 0 ? ` ${result.remaining} pair(s) still waiting.` : '';
       setNotice(decision === 'duplicate'
-        ? `${result.merged} record(s) set aside as duplicates from ${result.pairs} pair(s).`
-        : `${result.pairs} pair(s) marked as separate studies.`);
+        ? `${result.merged} record(s) set aside as duplicates from ${result.pairs} pair(s).${left}`
+        : `${result.pairs} pair(s) marked as separate studies.${left}`);
     } catch (err) {
       setNotice(errorMessage(err, 'Could not decide the pairs.'));
     }
@@ -89,7 +95,9 @@ function CandidatePairs({ version }: { version: number }) {
         decision,
         keep_record_id: keep?.id ?? null,
       });
-      setPairs((await load()).pairs);
+      const next: DuplicateCandidateList = await load();
+      setPairs(next.pairs);
+      setWaiting(next.total);
       await refreshRecords();
     } catch (err) {
       setNotice(errorMessage(err, 'Could not save the decision.'));
@@ -101,11 +109,13 @@ function CandidatePairs({ version }: { version: number }) {
   return (
     <div style={{ marginTop: '32px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', alignItems: 'center', margin: '0 0 8px' }}>
-        <h4 style={{ margin: 0, color: 'var(--text-primary)' }}>Possible duplicates to review ({pairs.length})</h4>
+        <h4 style={{ margin: 0, color: 'var(--text-primary)' }}>
+          Possible duplicates to review ({pairs.length}{waiting > pairs.length ? ` of ${waiting}` : ''})
+        </h4>
         {pairs.length > 0 && (
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <button className="btn-primary" style={smallButton} disabled={busy} onClick={() => decideAll('duplicate')}>
-              Drop all {pairs.length} as duplicates
+              Drop {waiting > pairs.length ? `these ${pairs.length}` : `all ${pairs.length}`} as duplicates
             </button>
             <button className="btn-glass" style={smallButton} disabled={busy} onClick={() => decideAll('not_duplicate')}>
               Keep all as separate studies
@@ -114,6 +124,11 @@ function CandidatePairs({ version }: { version: number }) {
         )}
       </div>
       {notice && <p role="status" style={{ color: 'var(--text-secondary)' }}>{notice}</p>}
+      {waiting > pairs.length && (
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 8px' }}>
+          Your plan reviews {pairs.length} pair(s) at a time. Decide these and the next lot appears.
+        </p>
+      )}
       {pairs.length === 0 ? (
         <p style={{ color: 'var(--text-secondary)' }}>No record pairs with near-identical titles are waiting for a decision.</p>
       ) : (

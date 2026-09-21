@@ -46,3 +46,6 @@ export const matchConnector = (sources: SearchSources | null, database: string) 
 
 export const matchImportOnly = (sources: SearchSources | null, database: string) =>
   sources?.import_only.find(source => source.aliases.includes(normalizeDatabaseName(database))) ?? null;
+
+// Possible duplicates: `pairs` is the batch this plan reviews at a time, `total` is everything still waiting.
+export type DuplicateCandidateList = { pairs: DuplicateCandidate[]; total: number; batch: number | null };

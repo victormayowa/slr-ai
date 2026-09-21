@@ -256,6 +256,22 @@ def require_user_feature(db: Session, user: models.User, feature: str) -> None:
     )
 
 
+# Settings that shape how much work a plan does at once, rather than a total it may use. They are kept in the plan's
+# limits so administrators can change them, but they aren't usage meters, so they have no label above.
+BATCH_DEFAULTS = {"duplicate_batch": 10}
+
+
+def batch_size(db: Session, account: Account, name: str) -> int | None:
+    """How many items of `name` this account handles in one go. None means no limit."""
+    if not billing_enabled():
+        return None
+    plan = plan_for(db, account)
+    if plan is None:
+        return BATCH_DEFAULTS.get(name)
+    value = plan.limits.get(name, BATCH_DEFAULTS.get(name))
+    return int(value) if value is not None else None
+
+
 def require_ai(db: Session, project: models.Project, provider: str) -> None:
     """Checked before AI work that uses the server's API keys: which providers the plan allows. What the work costs is
     taken from the account's prepaid balance (ai_credit.py). Work with a user's own key is never limited."""

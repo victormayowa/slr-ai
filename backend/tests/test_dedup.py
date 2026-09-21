@@ -1,6 +1,7 @@
 """Automatic duplicate detection, candidate pairs for reviewers, reviewer decisions, and file imports."""
 
 import pytest
+from test_billing import billing_on, credit, set_limits  # noqa: F401  (billing_on is used as a fixture)
 from workflow_helpers import create_project, import_records, lock_protocol, url, workflow
 
 import models
@@ -62,6 +63,39 @@ def test_near_matches_are_candidates_for_a_reviewer_not_marked_automatically():
     assert "Different DOIs" in pairs[0].reasons
     assert pairs[1].reasons[1:] == ["Years differ by one", "Same first author"]
     assert candidate_pairs(records, reviewed={(1, 2), (3, 4)}) == []
+
+
+def test_the_plan_says_how_many_pairs_are_reviewed_at_a_time(client, project, fake_provider, billing_on):  # noqa: F811
+    project_id, headers = project
+    credit("user", client.get("/api/auth/me", headers=headers).json()["id"], "5")
+    lock_protocol(client, project_id, headers, fake_provider)
+    # Six pairs of near-identical titles; the free plan offers ten at a time, so lower it to see the batch work.
+    import_records(
+        client,
+        project_id,
+        headers,
+        [
+            {"title": f"Exercise and depression in older people trial {number}", "year": "2018", "doi": f"10.1/{i}"}
+            for number in range(3)
+            for i in (f"{number}a", f"{number}b")
+        ],
+    )
+    set_limits("free", duplicate_batch=2)
+    try:
+        listing = client.get(url(project_id, "duplicate-candidates"), headers=headers).json()
+
+        assert listing["batch"] == 2
+        assert len(listing["pairs"]) == 2
+        assert listing["total"] >= 3, "the rest are still waiting"
+
+        decided = client.post(
+            url(project_id, "duplicate-candidates/decide-all"), json={"decision": "not_duplicate"}, headers=headers
+        ).json()
+
+        assert decided["pairs"] == 2, "deciding them all decides the batch that was shown"
+        assert decided["remaining"] >= 1
+    finally:
+        set_limits("free", duplicate_batch=10)
 
 
 def test_every_pair_can_be_decided_at_once(client, project, fake_provider):

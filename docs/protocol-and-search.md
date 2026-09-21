@@ -58,6 +58,9 @@ recorded with their URL and search date.
 Duplicates are found by identifiers (DOI, PMID) and by matching titles, authors, and years. Possible duplicates are
 confirmed or rejected by a reviewer, and similar records can be compared with embeddings.
 
+How many pairs are offered at a time follows the plan: ten on Free, a hundred on Researcher and Team, and all of them
+for Institution. Decide the ones shown and the next lot appears, with the number still waiting beside the heading.
+
 Pairs can be decided one at a time, choosing which record to keep, or all at once: "Drop all as duplicates" merges
 every waiting pair, keeping the earlier record of each, which is the record automatic deduplication keeps; "Keep all
 as separate studies" marks them all as distinct. Either way each pair is recorded with who decided it, so the PRISMA

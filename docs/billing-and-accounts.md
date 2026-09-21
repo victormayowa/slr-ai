@@ -28,6 +28,7 @@ Plans limit:
 - **Members in a project.** Invitations count when they are sent.
 - **Records added each month** by searches and imports.
 - **Storage** is included per plan; files you keep in your own bucket don't count (see below).
+- **Possible duplicates reviewed at a time**: 10 on Free, 100 on Researcher and Team, all of them for Institution.
 - **Stored documents** (full texts, uploads, and plots), in MB. Files kept in your own storage bucket don't count; see
   [Your own AI keys and your own storage](your-keys-and-storage.md).
 - **Active surveillance schedules** for living reviews.

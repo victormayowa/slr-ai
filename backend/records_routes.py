@@ -654,7 +654,11 @@ class BulkCandidateDecision(BaseModel):
 def duplicate_candidates(
     access: ProjectAccess = Depends(project_access(Permission.VIEW_PROJECT)), db: Session = Depends(get_db)
 ):
-    """Pairs of records with very similar titles and close years that a reviewer hasn't decided on."""
+    """Pairs of records with very similar titles and close years that a reviewer hasn't decided on.
+
+    The plan says how many are offered at a time (entitlements.batch_size); `total` is how many are waiting in all, so
+    a reviewer can see there is more to come.
+    """
     records = db.scalars(
         select(models.Record)
         .where(models.Record.project_id == access.project.id)
@@ -662,7 +666,12 @@ def duplicate_candidates(
     ).all()
     by_id = {record.id: record for record in records}
     pairs = candidate_pairs(records, reviewed_pairs(db, access.project.id))
+    total = len(pairs)
+    batch = entitlements.batch_size(db, entitlements.account_for_project(access.project), "duplicate_batch")
+    pairs = pairs[:batch] if batch is not None else pairs
     return {
+        "total": total,
+        "batch": batch,
         "pairs": [
             {
                 "record": record_brief(by_id[pair.record_id]),
@@ -700,6 +709,10 @@ def decide_all_duplicate_candidates(
     records = db.scalars(select(models.Record).where(models.Record.project_id == access.project.id)).all()
     by_id = {record.id: record for record in records}
     pairs = candidate_pairs(records, reviewed_pairs(db, access.project.id))
+    total = len(pairs)
+    # The same batch the list offers, so "decide them all" means the pairs the reviewer was shown.
+    batch = entitlements.batch_size(db, entitlements.account_for_project(access.project), "duplicate_batch")
+    pairs = pairs[:batch] if batch is not None else pairs
     reviews = {
         (review.record_id, review.other_record_id): review
         for review in db.scalars(
@@ -734,7 +747,12 @@ def decide_all_duplicate_candidates(
         details={"decision": body.decision, "pairs": len(pairs), "merged": merged},
     )
     db.commit()
-    return {"decision": body.decision, "pairs": len(pairs), "merged": len(merged)}
+    return {
+        "decision": body.decision,
+        "pairs": len(pairs),
+        "merged": len(merged),
+        "remaining": max(total - len(pairs), 0),
+    }
 
 
 @router.post("/duplicate-candidates/decision")
